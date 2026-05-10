@@ -38,6 +38,7 @@
     "@tanstack/vue-query": "^5.100.9",
     "@tanstack/vue-table": "^8.21.3",
     "@tanstack/vue-virtual": "^3.13.24",
+    "@tauri-apps/plugin-websocket": "~2.4.2",
     "@types/byte-size": "^8.1.2",
     "@types/d3": "^7.4.3",
     "@types/lodash": "^4.17.24",

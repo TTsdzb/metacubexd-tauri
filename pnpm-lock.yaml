@@ -71,6 +71,9 @@ importers:
       '@tanstack/vue-virtual':
         specifier: ^3.13.24
         version: 3.13.24(vue@3.5.33(typescript@6.0.3))
+      '@tauri-apps/plugin-websocket':
+        specifier: ~2.4.2
+        version: 2.4.2
       '@types/byte-size':
         specifier: ^8.1.2
         version: 8.1.2
@@ -4480,6 +4483,12 @@ packages:
     peerDependencies:
       vue: ^2.7.0 || ^3.0.0
 
+  '@tauri-apps/api@2.11.0':
+    resolution:
+      {
+        integrity: sha512-7CinYODhky9lmO23xHnUFv0Xt43fbtWMyxZcLcRBlFkcgXKuEirBvHpmtJ89YMhyeGcq20Wuc47Fa4XjyniywA==,
+      }
+
   '@tauri-apps/cli-darwin-arm64@2.10.1':
     resolution:
       {
@@ -4591,6 +4600,12 @@ packages:
       }
     engines: { node: '>= 10' }
     hasBin: true
+
+  '@tauri-apps/plugin-websocket@2.4.2':
+    resolution:
+      {
+        integrity: sha512-B1/csKPwJH9kLduNoqWFUdCsTgCvLM84T5ZZYK35jeBc9m2cm2m2G/hbSr28ZpVOZrl0x24fCWFe/9rpp7WETw==,
+      }
 
   '@tybys/wasm-util@0.10.2':
     resolution:
@@ -15244,6 +15259,8 @@ snapshots:
       '@tanstack/virtual-core': 3.14.0
       vue: 3.5.33(typescript@6.0.3)
 
+  '@tauri-apps/api@2.11.0': {}
+
   '@tauri-apps/cli-darwin-arm64@2.10.1':
     optional: true
 
@@ -15290,6 +15307,10 @@ snapshots:
       '@tauri-apps/cli-win32-arm64-msvc': 2.10.1
       '@tauri-apps/cli-win32-ia32-msvc': 2.10.1
       '@tauri-apps/cli-win32-x64-msvc': 2.10.1
+
+  '@tauri-apps/plugin-websocket@2.4.2':
+    dependencies:
+      '@tauri-apps/api': 2.11.0
 
   '@tybys/wasm-util@0.10.2':
     dependencies:

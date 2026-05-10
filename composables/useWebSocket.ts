@@ -1,4 +1,5 @@
 import type { Log, MemoryData, TrafficData, WsMsg } from '~/types'
+import TauriWebSocket from '@tauri-apps/plugin-websocket'
 import { getCurrentScope, onScopeDispose } from 'vue'
 import { useMockMode } from './useApi'
 import { useMockData } from './useMockData'
@@ -11,15 +12,17 @@ export function useBackendWebSocket() {
   const configStore = useConfigStore()
 
   // WebSocket connections
-  let connectionsWs: WebSocket | null = null
-  let trafficWs: WebSocket | null = null
-  let memoryWs: WebSocket | null = null
-  let logsWs: WebSocket | null = null
+  let connectionsWs: { ws: TauriWebSocket; removeListener: () => void } | null =
+    null
+  let trafficWs: { ws: TauriWebSocket; removeListener: () => void } | null =
+    null
+  let memoryWs: { ws: TauriWebSocket; removeListener: () => void } | null = null
+  let logsWs: { ws: TauriWebSocket; removeListener: () => void } | null = null
 
   // Mock mode intervals
   let mockInterval: ReturnType<typeof setInterval> | null = null
 
-  const createWebSocket = (
+  const createWebSocket = async (
     path: string,
     onMessage: (data: unknown) => void,
   ) => {
@@ -32,22 +35,21 @@ export function useBackendWebSocket() {
     const params = new URLSearchParams()
     if (secret) params.set('token', secret)
 
-    const ws = new WebSocket(`${wsUrl}/${path}?${params.toString()}`)
+    const ws = await TauriWebSocket.connect(
+      `${wsUrl}/${path}?${params.toString()}`,
+    )
 
-    ws.onmessage = (event) => {
+    const removeListener = ws.addListener((msg) => {
+      if (msg.type !== 'Text') return
       try {
-        const data = JSON.parse(event.data)
+        const data = JSON.parse(msg.data)
         onMessage(data)
       } catch {
         // Ignore parse errors
       }
-    }
+    })
 
-    ws.onerror = (error) => {
-      console.error(`WebSocket error for ${path}:`, error)
-    }
-
-    return ws
+    return { ws, removeListener }
   }
 
   // Connect to all WebSocket endpoints
@@ -135,7 +137,7 @@ export function useBackendWebSocket() {
     }
 
     // Connections WebSocket
-    connectionsWs = createWebSocket('connections', (data: unknown) => {
+    createWebSocket('connections', (data: unknown) => {
       const wsMsg = data as WsMsg
       connectionsStore.updateFromWsMsg(wsMsg)
       // Add data point for connection count history
@@ -143,10 +145,12 @@ export function useBackendWebSocket() {
         const connectionCount = wsMsg.connections?.length ?? 0
         globalStore.addConnectionCountDataPoint(Date.now(), connectionCount)
       }
+    }).then((ws) => {
+      connectionsWs = ws
     })
 
     // Traffic WebSocket
-    trafficWs = createWebSocket('traffic', (data: unknown) => {
+    createWebSocket('traffic', (data: unknown) => {
       const trafficData = data as TrafficData
       globalStore.setLatestTraffic(trafficData)
       // Add data point for chart history
@@ -155,18 +159,24 @@ export function useBackendWebSocket() {
         trafficData.down,
         trafficData.up,
       )
+    }).then((ws) => {
+      trafficWs = ws
     })
 
     // Memory WebSocket
-    memoryWs = createWebSocket('memory', (data: unknown) => {
+    createWebSocket('memory', (data: unknown) => {
       const memoryData = data as MemoryData
       globalStore.setLatestMemory(memoryData)
       // Add data point for chart history
       globalStore.addMemoryDataPoint(Date.now(), memoryData.inuse)
+    }).then((ws) => {
+      memoryWs = ws
     })
 
     // Logs WebSocket
-    logsWs = createLogsWebSocket()
+    createLogsWebSocket().then((ws) => {
+      logsWs = ws
+    })
   }
 
   // Disconnect all WebSockets
@@ -177,10 +187,14 @@ export function useBackendWebSocket() {
       mockInterval = null
     }
 
-    connectionsWs?.close()
-    trafficWs?.close()
-    memoryWs?.close()
-    logsWs?.close()
+    connectionsWs?.removeListener()
+    connectionsWs?.ws.disconnect()
+    trafficWs?.removeListener()
+    trafficWs?.ws.disconnect()
+    memoryWs?.removeListener()
+    memoryWs?.ws.disconnect()
+    logsWs?.removeListener()
+    logsWs?.ws.disconnect()
 
     connectionsWs = null
     trafficWs = null
@@ -189,7 +203,7 @@ export function useBackendWebSocket() {
   }
 
   // Helper: create logs WebSocket
-  const createLogsWebSocket = (): WebSocket | null => {
+  const createLogsWebSocket = async () => {
     const endpoint = endpointStore.currentEndpoint
     if (!endpoint) return null
 
@@ -198,23 +212,33 @@ export function useBackendWebSocket() {
     if (endpoint.secret) params.set('token', endpoint.secret)
     params.set('level', configStore.logLevel)
 
-    const ws = new WebSocket(`${wsUrl}/logs?${params.toString()}`)
-    ws.onmessage = (event) => {
+    const ws = await TauriWebSocket.connect(
+      `${wsUrl}/logs?${params.toString()}`,
+    )
+    const removeListener = ws.addListener((msg) => {
+      if (msg.type !== 'Text') return
       try {
-        const data = JSON.parse(event.data) as Log
+        const data = JSON.parse(msg.data) as Log
         logsStore.addLog(data)
       } catch {
         // Ignore parse errors
       }
-    }
+    })
 
-    return ws
+    return { ws, removeListener }
   }
 
   // Reconnect (e.g., when log level changes)
   const reconnectLogs = () => {
-    logsWs?.close()
-    logsWs = useMockMode() ? null : createLogsWebSocket()
+    logsWs?.removeListener()
+    logsWs?.ws.disconnect()
+    if (useMockMode()) {
+      logsWs = null
+      return
+    }
+    createLogsWebSocket().then((ws) => {
+      logsWs = ws
+    })
   }
 
   if (getCurrentScope()) {
