@@ -673,15 +673,42 @@ watch(
 @keyframes fade-slide-in {
   from {
     opacity: 0;
-    transform: translateY(10px);
+    transform: translateY(14px) scale(0.985);
   }
   to {
     opacity: 1;
-    transform: translateY(0);
+    transform: translateY(0) scale(1);
   }
 }
 
 .animate-fade-slide-in {
-  animation: fade-slide-in 0.4s ease-out backwards;
+  animation: fade-slide-in 380ms var(--ease-snappy) backwards;
+}
+
+/* Overview stat cards — unify with motion system */
+.overview-stat-card {
+  position: relative;
+  transition:
+    transform var(--dur-base) var(--ease-spring),
+    box-shadow var(--dur-base) var(--ease-soft),
+    border-color var(--dur-base) var(--ease-soft);
+  box-shadow: var(--inner-highlight);
+}
+.overview-stat-card:hover {
+  transform: translateY(-3px);
+  box-shadow: var(--lift-2), var(--inner-highlight);
+}
+.overview-stat-card:active {
+  transform: translateY(-1px) scale(0.99);
+  transition-duration: var(--dur-instant);
+  transition-timing-function: var(--ease-press);
+}
+
+/* Icon container inside stat cards lifts slightly on card hover */
+.overview-stat-card > div:first-child {
+  transition: transform var(--dur-base) var(--ease-spring);
+}
+.overview-stat-card:hover > div:first-child {
+  transform: scale(1.08) rotate(-3deg);
 }
 </style>

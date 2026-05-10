@@ -1,4 +1,5 @@
 import type { Log, MemoryData, TrafficData, WsMsg } from '~/types'
+import { getCurrentScope, onScopeDispose } from 'vue'
 import { useMockMode } from './useApi'
 import { useMockData } from './useMockData'
 
@@ -51,6 +52,8 @@ export function useBackendWebSocket() {
 
   // Connect to all WebSocket endpoints
   const connect = () => {
+    disconnect()
+
     // In mock mode, use mock data instead of WebSocket
     if (useMockMode()) {
       const mockData = useMockData()
@@ -163,23 +166,7 @@ export function useBackendWebSocket() {
     })
 
     // Logs WebSocket
-    const endpoint = endpointStore.currentEndpoint
-    if (endpoint) {
-      const wsUrl = endpointStore.wsEndpointURL
-      const params = new URLSearchParams()
-      if (endpoint.secret) params.set('token', endpoint.secret)
-      params.set('level', configStore.logLevel)
-
-      logsWs = new WebSocket(`${wsUrl}/logs?${params.toString()}`)
-      logsWs.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data) as Log
-          logsStore.addLog(data)
-        } catch {
-          // Ignore parse errors
-        }
-      }
-    }
+    logsWs = createLogsWebSocket()
   }
 
   // Disconnect all WebSockets
@@ -201,27 +188,37 @@ export function useBackendWebSocket() {
     logsWs = null
   }
 
+  // Helper: create logs WebSocket
+  const createLogsWebSocket = (): WebSocket | null => {
+    const endpoint = endpointStore.currentEndpoint
+    if (!endpoint) return null
+
+    const wsUrl = endpointStore.wsEndpointURL
+    const params = new URLSearchParams()
+    if (endpoint.secret) params.set('token', endpoint.secret)
+    params.set('level', configStore.logLevel)
+
+    const ws = new WebSocket(`${wsUrl}/logs?${params.toString()}`)
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data) as Log
+        logsStore.addLog(data)
+      } catch {
+        // Ignore parse errors
+      }
+    }
+
+    return ws
+  }
+
   // Reconnect (e.g., when log level changes)
   const reconnectLogs = () => {
     logsWs?.close()
+    logsWs = useMockMode() ? null : createLogsWebSocket()
+  }
 
-    const endpoint = endpointStore.currentEndpoint
-    if (endpoint) {
-      const wsUrl = endpointStore.wsEndpointURL
-      const params = new URLSearchParams()
-      if (endpoint.secret) params.set('token', endpoint.secret)
-      params.set('level', configStore.logLevel)
-
-      logsWs = new WebSocket(`${wsUrl}/logs?${params.toString()}`)
-      logsWs.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data) as Log
-          logsStore.addLog(data)
-        } catch {
-          // Ignore parse errors
-        }
-      }
-    }
+  if (getCurrentScope()) {
+    onScopeDispose(disconnect)
   }
 
   return {

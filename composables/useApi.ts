@@ -39,13 +39,14 @@ function getMockData(url: string): unknown {
   if (path === 'rules') {
     const rulesObj: Record<string, (typeof mockData.mockRules)[0]> = {}
     mockData.mockRules.forEach((rule, idx) => {
-      rulesObj[`rule-${idx}`] = rule
+      rulesObj[String(idx)] = rule
     })
 
     return { rules: rulesObj }
   }
   if (path === 'providers/rules')
     return { providers: mockData.mockRuleProviders }
+  if (path === 'rules/disable') return {}
   if (path === 'connections')
     return {
       connections: mockData.mockConnections,
@@ -105,7 +106,7 @@ export function useRequest() {
   }
 
   return ky.create({
-    prefixUrl: endpoint.url,
+    prefix: endpoint.url,
     headers,
     timeout: 5000,
   })
@@ -119,23 +120,36 @@ export function useGithubAPI() {
   }
 
   return ky.create({
-    prefixUrl: 'https://api.github.com',
+    prefix: 'https://api.github.com',
     headers,
   })
 }
 
 // API Functions
-export function checkEndpointAPI(url: string, secret: string) {
+export type EndpointCheckError = 'mixed_content' | 'network_error' | null
+
+export function checkEndpointAPI(
+  url: string,
+  secret: string,
+): Promise<EndpointCheckError> {
   return ky
     .get(url.endsWith('/') ? `${url}version` : `${url}/version`, {
       headers: secret ? { Authorization: `Bearer ${secret}` } : {},
       timeout: 5000,
     })
-    .then(({ ok }) => ok)
+    .then(() => null)
     .catch((err) => {
       console.error(err)
 
-      return false
+      if (
+        typeof window !== 'undefined' &&
+        window.location.protocol === 'https:' &&
+        url.startsWith('http://')
+      ) {
+        return 'mixed_content'
+      }
+
+      return 'network_error'
     })
 }
 
@@ -265,6 +279,14 @@ export function updateRuleProviderAPI(providerName: string) {
   return request.put(`providers/rules/${encodeURIComponent(providerName)}`)
 }
 
+export function toggleRuleDisabledAPI(index: number, disabled: boolean) {
+  const request = useRequest()
+
+  return request.patch('rules/disable', {
+    json: { [index]: disabled },
+  })
+}
+
 // Config Actions with loading states
 export function useConfigActions() {
   const reloadingConfigFile = ref(false)
@@ -285,8 +307,9 @@ export function useConfigActions() {
       })
     } catch {
       /* empty */
+    } finally {
+      reloadingConfigFile.value = false
     }
-    reloadingConfigFile.value = false
   }
 
   const fetchingRemoteConfig = ref(false)
@@ -318,8 +341,9 @@ export function useConfigActions() {
       await request.post('cache/fakeip/flush')
     } catch {
       /* empty */
+    } finally {
+      flushingFakeIPData.value = false
     }
-    flushingFakeIPData.value = false
   }
 
   const flushDNSCacheAPI = async () => {
@@ -329,8 +353,9 @@ export function useConfigActions() {
       await request.post('cache/dns/flush')
     } catch {
       /* empty */
+    } finally {
+      flushingDNSCache.value = false
     }
-    flushingDNSCache.value = false
   }
 
   const updateGEODatabasesAPI = async () => {
@@ -340,8 +365,9 @@ export function useConfigActions() {
       await request.post('configs/geo')
     } catch {
       /* empty */
+    } finally {
+      updatingGEODatabases.value = false
     }
-    updatingGEODatabases.value = false
   }
 
   const upgradeBackendAPI = async () => {
@@ -351,8 +377,9 @@ export function useConfigActions() {
       await request.post('upgrade')
     } catch {
       /* empty */
+    } finally {
+      upgradingBackend.value = false
     }
-    upgradingBackend.value = false
   }
 
   const upgradeUIAPI = async () => {
@@ -362,8 +389,9 @@ export function useConfigActions() {
       await request.post('upgrade/ui')
     } catch {
       /* empty */
+    } finally {
+      upgradingUI.value = false
     }
-    upgradingUI.value = false
   }
 
   const restartBackendAPI = async () => {
@@ -373,8 +401,9 @@ export function useConfigActions() {
       await request.post('restart')
     } catch {
       /* empty */
+    } finally {
+      restartingBackend.value = false
     }
-    restartingBackend.value = false
   }
 
   return {
@@ -398,6 +427,8 @@ export function useConfigActions() {
 }
 
 // Release API
+const BACKEND_VERSION_RE = /(alpha|beta|meta)-?(\w+)/
+
 interface ReleaseAPIResponse {
   tag_name: string
   body: string
@@ -420,7 +451,7 @@ export async function frontendReleaseAPI(currentVersion: string) {
 export async function backendReleaseAPI(currentVersion: string) {
   const githubAPI = useGithubAPI()
   const repositoryURL = 'repos/MetaCubeX/mihomo'
-  const match = /(alpha|beta|meta)-?(\w+)/.exec(currentVersion)
+  const match = BACKEND_VERSION_RE.exec(currentVersion)
 
   const releaseByAssets = async (url: string, versionSuffix: string) => {
     const { assets, body } = await githubAPI
@@ -489,7 +520,7 @@ export async function fetchBackendReleasesAPI(
 ): Promise<ReleaseInfo[]> {
   const githubAPI = useGithubAPI()
   const repositoryURL = 'repos/MetaCubeX/mihomo'
-  const match = /(alpha|beta|meta)-?(\w+)/.exec(currentVersion)
+  const match = BACKEND_VERSION_RE.exec(currentVersion)
 
   if (!match) {
     // Stable version (e.g. "v1.19.9") - fetch stable releases

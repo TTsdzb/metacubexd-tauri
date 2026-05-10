@@ -97,9 +97,30 @@ export const useConfigStore = defineStore('config', () => {
       'connectionsTableColumnOrder',
       CONNECTIONS_TABLE_INITIAL_COLUMN_ORDER,
     )
-  const useMobileConnectionsTable = useLocalStorage(
-    'useMobileConnectionsTable',
-    false,
+  // One-time migration from useMobileConnectionsTable boolean
+  // Must be done before useLocalStorage reads the key so the factory isn't
+  // called multiple times (VueUse calls the factory twice internally).
+  const _connectionsDisplayModeDefault = (() => {
+    if (localStorage.getItem('connectionsDisplayMode') !== null) {
+      return 'auto' as const // new key already present; default is irrelevant
+    }
+    const legacyRaw = localStorage.getItem('useMobileConnectionsTable')
+    if (legacyRaw !== null) {
+      localStorage.removeItem('useMobileConnectionsTable')
+      try {
+        return (JSON.parse(legacyRaw) === true ? 'table' : 'auto') as
+          | 'auto'
+          | 'table'
+          | 'card'
+      } catch {
+        return 'auto' as const
+      }
+    }
+    return 'auto' as const
+  })()
+  const connectionsDisplayMode = useLocalStorage<'auto' | 'table' | 'card'>(
+    'connectionsDisplayMode',
+    _connectionsDisplayModeDefault,
   )
 
   // Logs settings
@@ -202,7 +223,7 @@ export const useConfigStore = defineStore('config', () => {
     connectionsTableSize,
     connectionsTableColumnVisibility,
     connectionsTableColumnOrder,
-    useMobileConnectionsTable,
+    connectionsDisplayMode,
     quickFilterRegex,
     // Logs
     logsTableSize,

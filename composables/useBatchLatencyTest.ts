@@ -4,6 +4,25 @@ import { useRequest } from './useApi'
 const BATCH_SIZE = 10 // Max concurrent tests
 const BATCH_DELAY = 200 // Delay between batches in ms
 
+function waitForBatchDelay(signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.resolve()
+
+  return new Promise((resolve) => {
+    const timeoutId = setTimeout(() => {
+      signal?.removeEventListener('abort', resolveDelay)
+      resolve()
+    }, BATCH_DELAY)
+
+    function resolveDelay() {
+      clearTimeout(timeoutId)
+      signal?.removeEventListener('abort', resolveDelay)
+      resolve()
+    }
+
+    signal?.addEventListener('abort', resolveDelay, { once: true })
+  })
+}
+
 export interface BatchTestOptions {
   url: string
   timeout: number
@@ -13,6 +32,7 @@ export interface BatchTestOptions {
 
 export function useBatchLatencyTest() {
   const configStore = useConfigStore()
+  const proxiesStore = useProxiesStore()
   const nodeRecommendationStore = useNodeRecommendationStore()
 
   const isRunning = ref(false)
@@ -24,12 +44,14 @@ export function useBatchLatencyTest() {
     proxyName: string,
     url: string,
     timeout: number,
+    signal?: AbortSignal,
   ): Promise<{ proxyName: string; delay: number }> => {
     try {
       const request = useRequest()
       const result = await request
         .get(`proxies/${encodeURIComponent(proxyName)}/delay`, {
           searchParams: { url, timeout },
+          signal,
         })
         .json<{ delay: number }>()
       return { proxyName, delay: result.delay }
@@ -92,7 +114,12 @@ export function useBatchLatencyTest() {
           progress.value.current = nodeName
           nodeRecommendationStore.batchTestProgress.current = nodeName
 
-          const result = await testSingleNode(nodeName, url, timeout)
+          const result = await testSingleNode(
+            nodeName,
+            url,
+            timeout,
+            abortController.value?.signal,
+          )
           results[nodeName] = result.delay
 
           progress.value.completed++
@@ -118,7 +145,7 @@ export function useBatchLatencyTest() {
           i + BATCH_SIZE < nodeNames.length &&
           !abortController.value?.signal.aborted
         ) {
-          await new Promise((resolve) => setTimeout(resolve, BATCH_DELAY))
+          await waitForBatchDelay(abortController.value?.signal)
         }
       }
     } finally {
@@ -131,6 +158,9 @@ export function useBatchLatencyTest() {
         isRunning: false,
       }
       abortController.value = null
+
+      // Refresh proxy data so UI shows latest latency
+      await proxiesStore.fetchProxies()
     }
 
     return results
@@ -157,6 +187,9 @@ export function useBatchLatencyTest() {
 
       // Record all results
       nodeRecommendationStore.recordBatchResults(results)
+
+      // Refresh proxy data so UI shows latest latency
+      await proxiesStore.fetchProxies()
 
       return results
     } finally {

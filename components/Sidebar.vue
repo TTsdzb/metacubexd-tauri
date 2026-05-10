@@ -66,7 +66,7 @@ const toggleSidebar = () => {
         <label
           v-if="route.path !== '/setup' && !configStore.useMobileBottomNav"
           for="main-drawer"
-          class="flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg bg-transparent text-base-content transition-all duration-200 ease-in-out hover:bg-[var(--sidebar-hover)]"
+          class="press-tactile flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg bg-transparent text-base-content hover:bg-[var(--sidebar-hover)]"
           aria-label="open sidebar"
         >
           <IconMenu2 class="h-5 w-5" />
@@ -110,7 +110,7 @@ const toggleSidebar = () => {
 
       <!-- Sidebar container - collapsible on desktop -->
       <div
-        class="flex h-full w-52 flex-col border-r border-[var(--sidebar-border)] bg-[linear-gradient(180deg,color-mix(in_oklch,var(--color-base-200)_98%,transparent)_0%,var(--color-base-200)_100%)] backdrop-blur-[12px] transition-[width] duration-300 ease-[cubic-bezier(0.4,0,0.2,1)]"
+        class="flex h-full w-52 flex-col border-r border-[var(--sidebar-border)] bg-[linear-gradient(180deg,color-mix(in_oklch,var(--color-base-200)_98%,transparent)_0%,var(--color-base-200)_100%)] backdrop-blur-[12px] transition-[width] duration-300 ease-[var(--ease-spring-soft)]"
         :class="configStore.sidebarExpanded ? '' : 'lg:w-16'"
       >
         <!-- Sidebar header -->
@@ -130,7 +130,7 @@ const toggleSidebar = () => {
           </div>
           <!-- Expand/Collapse button (desktop only) -->
           <button
-            class="hidden w-full cursor-pointer items-center justify-center gap-2 rounded-lg border border-[var(--sidebar-border)] bg-transparent p-2 text-sm text-base-content transition-all duration-200 ease-in-out hover:border-[color-mix(in_oklch,var(--color-base-content)_20%,transparent)] hover:bg-[var(--sidebar-hover)] lg:flex"
+            class="press-tactile hidden w-full cursor-pointer items-center justify-center gap-2 rounded-lg border border-[var(--sidebar-border)] bg-transparent p-2 text-sm text-base-content hover:border-[color-mix(in_oklch,var(--color-base-content)_20%,transparent)] hover:bg-[var(--sidebar-hover)] lg:flex"
             :class="configStore.sidebarExpanded ? '' : 'aspect-square w-auto'"
             @click="toggleSidebar"
           >
@@ -151,37 +151,42 @@ const toggleSidebar = () => {
             <li
               v-for="(nav, index) in navItems"
               :key="nav.href"
-              class="animate-[slideIn_0.3s_ease-out_backwards]"
-              :style="{ animationDelay: `${index * 50}ms` }"
+              class="nav-stagger"
+              :style="{ animationDelay: `${index * 45}ms` }"
             >
               <NuxtLink
                 :to="nav.href"
-                class="relative flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-[color-mix(in_oklch,var(--color-base-content)_70%,transparent)] no-underline transition-all duration-200 ease-in-out hover:bg-[var(--sidebar-hover)] hover:text-base-content"
+                class="nav-link group relative flex w-full items-center gap-3 overflow-hidden rounded-lg px-3 py-2.5 text-sm font-medium text-[color-mix(in_oklch,var(--color-base-content)_70%,transparent)] no-underline hover:text-base-content"
                 :class="[
-                  isActive(nav.href)
-                    ? 'bg-[color-mix(in_oklch,var(--color-primary)_15%,transparent)] !text-primary hover:bg-[color-mix(in_oklch,var(--color-primary)_20%,transparent)]'
-                    : '',
+                  isActive(nav.href) ? 'is-active' : '',
                   configStore.sidebarExpanded
                     ? ''
                     : 'lg:justify-center lg:px-0',
                 ]"
                 :title="configStore.sidebarExpanded ? undefined : nav.name"
               >
+                <!-- Active glow surface (sits behind content) -->
+                <span
+                  aria-hidden="true"
+                  class="nav-link__glow pointer-events-none absolute inset-0 rounded-lg"
+                />
+                <!-- Active indicator bar — morphs into a pill -->
+                <span
+                  v-if="isActive(nav.href)"
+                  aria-hidden="true"
+                  class="nav-link__indicator absolute top-1/2 left-0 -translate-y-1/2 rounded-r-full bg-primary"
+                />
                 <div
-                  class="flex shrink-0 items-center justify-center transition-transform duration-200 ease-in-out group-hover:scale-110"
+                  class="nav-link__icon relative z-1 flex shrink-0 items-center justify-center"
                 >
                   <component :is="nav.icon" class="h-5 w-5" />
                 </div>
                 <span
-                  class="flex-1 overflow-hidden text-ellipsis whitespace-nowrap"
+                  class="relative z-1 flex-1 overflow-hidden text-ellipsis whitespace-nowrap"
                   :class="configStore.sidebarExpanded ? '' : 'lg:hidden'"
                 >
                   {{ nav.name }}
                 </span>
-                <div
-                  v-if="isActive(nav.href)"
-                  class="absolute top-1/2 left-0 h-[60%] w-[3px] -translate-y-1/2 animate-[indicatorIn_0.2s_ease-out] rounded-r-sm bg-primary"
-                />
               </NuxtLink>
             </li>
           </ul>
@@ -229,10 +234,15 @@ const toggleSidebar = () => {
 </template>
 
 <style scoped>
-@keyframes slideIn {
+/* Staggered entry: combines slide + spring settle */
+.nav-stagger {
+  animation: navSlideIn 360ms var(--ease-spring) backwards;
+}
+
+@keyframes navSlideIn {
   from {
     opacity: 0;
-    transform: translateX(-10px);
+    transform: translateX(-12px);
   }
   to {
     opacity: 1;
@@ -240,14 +250,90 @@ const toggleSidebar = () => {
   }
 }
 
-@keyframes indicatorIn {
-  from {
+/* Nav link — base interactions */
+.nav-link {
+  transition:
+    color var(--dur-fast) var(--ease-soft),
+    transform var(--dur-base) var(--ease-spring-soft);
+  will-change: transform;
+}
+.nav-link:hover {
+  transform: translateX(2px);
+}
+.nav-link:active {
+  transform: translateX(2px) scale(0.98);
+  transition-duration: var(--dur-instant);
+  transition-timing-function: var(--ease-press);
+}
+
+/* Glow surface — fades + grows on hover, shows colored bg on active */
+.nav-link__glow {
+  background: var(--sidebar-hover);
+  opacity: 0;
+  transform: scale(0.96);
+  transition:
+    opacity var(--dur-base) var(--ease-soft),
+    transform var(--dur-base) var(--ease-spring-soft),
+    background var(--dur-base) var(--ease-soft);
+}
+.nav-link:hover .nav-link__glow {
+  opacity: 1;
+  transform: scale(1);
+}
+.nav-link.is-active {
+  color: var(--color-primary);
+}
+.nav-link.is-active .nav-link__glow {
+  opacity: 1;
+  transform: scale(1);
+  background: linear-gradient(
+    90deg,
+    color-mix(in oklch, var(--color-primary) 18%, transparent) 0%,
+    color-mix(in oklch, var(--color-primary) 8%, transparent) 100%
+  );
+}
+.nav-link.is-active:hover .nav-link__glow {
+  background: linear-gradient(
+    90deg,
+    color-mix(in oklch, var(--color-primary) 24%, transparent) 0%,
+    color-mix(in oklch, var(--color-primary) 12%, transparent) 100%
+  );
+}
+
+/* Active indicator — appears with spring overshoot from collapsed pill */
+.nav-link__indicator {
+  width: 3px;
+  height: 60%;
+  box-shadow:
+    0 0 8px color-mix(in oklch, var(--color-primary) 60%, transparent),
+    0 0 2px color-mix(in oklch, var(--color-primary) 80%, transparent);
+  animation: indicatorMorph 360ms var(--ease-spring);
+  transform-origin: left center;
+}
+
+@keyframes indicatorMorph {
+  0% {
     opacity: 0;
-    transform: translateY(-50%) scaleY(0);
+    transform: translateY(-50%) scaleY(0) scaleX(0.5);
   }
-  to {
+  60% {
     opacity: 1;
-    transform: translateY(-50%) scaleY(1);
+    transform: translateY(-50%) scaleY(1.05) scaleX(1.4);
   }
+  100% {
+    opacity: 1;
+    transform: translateY(-50%) scaleY(1) scaleX(1);
+  }
+}
+
+/* Icon settles with spring on hover; on active stays slightly forward */
+.nav-link__icon {
+  transition: transform var(--dur-base) var(--ease-spring);
+}
+.nav-link:hover .nav-link__icon {
+  transform: scale(1.1) rotate(-2deg);
+}
+.nav-link.is-active .nav-link__icon {
+  transform: scale(1.05);
 }
 </style>

@@ -30,8 +30,13 @@ const mockNodeRecommendationStore = {
   recordBatchResults: vi.fn(),
 }
 
+const mockProxiesStore = {
+  fetchProxies: vi.fn(),
+}
+
 vi.stubGlobal('useConfigStore', () => mockConfigStore)
 vi.stubGlobal('useNodeRecommendationStore', () => mockNodeRecommendationStore)
+vi.stubGlobal('useProxiesStore', () => mockProxiesStore)
 
 describe('composables/useBatchLatencyTest', () => {
   beforeEach(() => {
@@ -223,6 +228,33 @@ describe('composables/useBatchLatencyTest', () => {
 
       // Should not throw
       expect(() => abortTest()).not.toThrow()
+    })
+
+    it('stops before the next batch when aborted during batch delay', async () => {
+      vi.useFakeTimers()
+      mockJson.mockResolvedValue({ delay: 100 })
+
+      const { abortTest, batchTestNodes } = useBatchLatencyTest()
+      const nodes = Array.from({ length: 11 }, (_, i) => `node${i + 1}`)
+
+      const testPromise = batchTestNodes(nodes, {
+        url: 'https://test.com',
+        timeout: 5000,
+      })
+
+      await vi.waitFor(() => {
+        expect(
+          mockNodeRecommendationStore.recordTestResult,
+        ).toHaveBeenCalledTimes(10)
+      })
+
+      abortTest()
+      await testPromise
+
+      expect(
+        mockNodeRecommendationStore.recordTestResult,
+      ).toHaveBeenCalledTimes(10)
+      vi.useRealTimers()
     })
   })
 

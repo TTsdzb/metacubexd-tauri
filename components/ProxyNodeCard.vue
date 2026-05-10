@@ -338,14 +338,14 @@ function handleLatencyTest() {
 
 <template>
   <!-- Wrapper for glow effect -->
-  <div class="relative p-1" :class="isSelected ? 'z-10' : 'z-0'">
+  <div class="relative h-full p-1" :class="isSelected ? 'z-10' : 'z-0'">
     <div
       ref="reference"
-      class="relative w-full rounded-[0.625rem] transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)]"
+      class="proxy-card relative h-full w-full rounded-[0.625rem]"
       :class="[
         isSelected
-          ? 'scale-[1.02] animate-[glowPulse_2s_ease-in-out_infinite] bg-primary text-primary-content'
-          : 'bg-neutral text-neutral-content hover:scale-[1.01] hover:shadow-[0_4px_12px_color-mix(in_oklch,var(--color-base-content)_15%,transparent)]',
+          ? 'proxy-card--selected animate-[glowPulse_2s_ease-in-out_infinite] bg-primary text-primary-content'
+          : 'bg-neutral text-neutral-content',
         isTesting
           ? 'animate-[testingPulse_1.5s_ease-in-out_infinite] border border-[color-mix(in_oklch,var(--color-success)_50%,transparent)]'
           : '',
@@ -356,6 +356,8 @@ function handleLatencyTest() {
       @touchmove="onTouchMove"
       @touchend="onTouchEnd"
     >
+      <!-- Top-edge light catch (subtle highlight) -->
+      <span aria-hidden="true" class="proxy-card__highlight" />
       <!-- UDP indicator -->
       <div
         v-if="isUDP"
@@ -374,7 +376,7 @@ function handleLatencyTest() {
       </div>
 
       <div
-        class="flex flex-col gap-2 p-[0.625rem]"
+        class="flex h-full flex-col gap-2 p-[0.625rem]"
         :class="{ 'cursor-pointer': !!onClick }"
         @click="onClick"
       >
@@ -413,16 +415,23 @@ function handleLatencyTest() {
           />
         </div>
 
-        <!-- Latency stability bar -->
-        <div
-          v-if="latencyTestHistory.length > 1"
-          class="flex h-1.5 w-full gap-px overflow-hidden rounded-full"
-        >
+        <div class="mt-auto min-h-[0.375rem]">
+          <!-- Latency stability bar -->
           <div
-            v-for="(result, index) in latencyStabilityBar"
-            :key="index"
-            class="h-full flex-1 bg-current first:rounded-l-full last:rounded-r-full"
-            :class="result.colorClass"
+            v-if="latencyStabilityBar.length > 0"
+            class="flex h-1.5 w-full gap-px overflow-hidden rounded-full"
+          >
+            <div
+              v-for="(result, index) in latencyStabilityBar"
+              :key="index"
+              class="h-full flex-1 bg-current first:rounded-l-full last:rounded-r-full"
+              :class="result.colorClass"
+            />
+          </div>
+          <div
+            v-else
+            class="h-1.5 w-full rounded-full bg-current opacity-[0.15]"
+            aria-hidden="true"
           />
         </div>
       </div>
@@ -433,7 +442,7 @@ function handleLatencyTest() {
           v-if="isTooltipOpen"
           ref="floating"
           :style="floatingStyles"
-          class="z-50 w-max max-w-80 rounded-xl bg-primary p-3 text-primary-content shadow-[0_10px_40px_color-mix(in_oklch,var(--color-base-content)_30%,transparent)]"
+          class="animate-pop-in z-50 w-max max-w-80 rounded-xl bg-primary p-3 text-primary-content shadow-[0_10px_40px_color-mix(in_oklch,var(--color-base-content)_30%,transparent)]"
           @mouseenter="onTooltipMouseEnter"
           @mouseleave="onTooltipMouseLeave"
         >
@@ -578,6 +587,55 @@ function handleLatencyTest() {
 </template>
 
 <style>
+.proxy-card {
+  transition:
+    transform var(--dur-base) var(--ease-spring),
+    box-shadow var(--dur-base) var(--ease-soft),
+    background-color var(--dur-base) var(--ease-soft);
+  will-change: transform;
+}
+.proxy-card:hover {
+  transform: translateY(-2px) scale(1.015);
+  box-shadow: var(--lift-2);
+}
+.proxy-card:active {
+  transform: translateY(0) scale(0.98);
+  transition-duration: var(--dur-instant);
+  transition-timing-function: var(--ease-press);
+}
+.proxy-card--selected {
+  transform: scale(1.02);
+}
+.proxy-card--selected:hover {
+  transform: translateY(-2px) scale(1.03);
+}
+.proxy-card--selected:active {
+  transform: scale(1);
+}
+
+/* Top-edge light catch — sits above the card body, ignores pointer events */
+.proxy-card__highlight {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(
+    180deg,
+    color-mix(in oklch, white 14%, transparent) 0%,
+    transparent 30%
+  );
+  mix-blend-mode: overlay;
+  opacity: 0.7;
+  z-index: 2;
+}
+.proxy-card--selected .proxy-card__highlight {
+  background: linear-gradient(
+    180deg,
+    color-mix(in oklch, white 22%, transparent) 0%,
+    transparent 35%
+  );
+}
+
 @keyframes testingPulse {
   0%,
   100% {

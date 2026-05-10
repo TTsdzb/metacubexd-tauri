@@ -1,5 +1,120 @@
 # Changelog
 
+## [1.247.0](https://github.com/MetaCubeX/metacubexd/compare/v1.246.3...v1.247.0) (2026-05-09)
+
+
+### Features
+
+* **connections:** add card render branch with aux-line helper ([29def02](https://github.com/MetaCubeX/metacubexd/commit/29def027e48e4877fe2ae403a1be7b6e7be8eb12))
+* **connections:** add composite column enum keys and default visibility ([c7d0f03](https://github.com/MetaCubeX/metacubexd/commit/c7d0f037f2e0149f54c9c7a6d746de8ada990c83))
+* **connections:** add renderText to ConnectionColumn for card aux line ([d642866](https://github.com/MetaCubeX/metacubexd/commit/d642866551c61d455489364f64cd89aa9d7509cb))
+* **connections:** add renderTwoLineCell utility for composite cells ([52aa207](https://github.com/MetaCubeX/metacubexd/commit/52aa20767c75ec1c361d8fcb0867c5cd6b40c4a7))
+* **connections:** card-mode sort and group dropdowns in toolbar ([2027d9e](https://github.com/MetaCubeX/metacubexd/commit/2027d9e6183ee95ab18936f79c6c43f1b829f024))
+* **connections:** replace useMobileConnectionsTable with three-state displayMode ([36abfca](https://github.com/MetaCubeX/metacubexd/commit/36abfcaae211912d87c8d126a87ef13d4d61d3d0))
+* **connections:** three-state displayMode radio in settings modal ([dafdcab](https://github.com/MetaCubeX/metacubexd/commit/dafdcab8706f325dc55040201dfdc47d0a5111cb))
+* **connections:** wire Flow composite column ([56ef0ef](https://github.com/MetaCubeX/metacubexd/commit/56ef0ef556852b37b3daa105e8fd2bb0d43f9208))
+* **connections:** wire HostProcess composite column ([2e846c4](https://github.com/MetaCubeX/metacubexd/commit/2e846c4cb89f2082b19325ad1de43521d1795d6e))
+* **connections:** wire RuleChains composite column ([e85c04d](https://github.com/MetaCubeX/metacubexd/commit/e85c04d98be85a56405bfa43123aaa3ec1673217))
+* **connections:** wire Traffic composite column ([a10b20b](https://github.com/MetaCubeX/metacubexd/commit/a10b20b3024b2c4b827ec759a5aab233f5c973a8))
+* **ui:** introduce motion design system ([c066846](https://github.com/MetaCubeX/metacubexd/commit/c066846aa9bae6c7bb4dec0270d384a833efd8b2))
+
+
+### Bug Fixes
+
+* **connections:** address final review — visibility migration, scoped CSS, zh header collision ([ff348a2](https://github.com/MetaCubeX/metacubexd/commit/ff348a2ac33859e08c756cdc8c7ab25bec2d7a72))
+* **connections:** center primary line when aux is empty ([32a7bf3](https://github.com/MetaCubeX/metacubexd/commit/32a7bf36625104bff8d6fb3ed8414b0d9a730795))
+* **connections:** correct describe casing and remove redundant type cast ([8f5a2d6](https://github.com/MetaCubeX/metacubexd/commit/8f5a2d6cc76697a3b10b30541490f88b3d709b9d))
+* **connections:** correct describe casing and remove redundant type cast ([4bdf9d4](https://github.com/MetaCubeX/metacubexd/commit/4bdf9d4c6321344a6cbaa5269c6b08271272e6f2))
+* **connections:** dedupe HostProcess aux and guard Flow aux against empty destination ([5726b2a](https://github.com/MetaCubeX/metacubexd/commit/5726b2a88f33557f21c414bccbbb407852a8b98d))
+* **connections:** drop custom JSON serializer for displayMode ([13bde1e](https://github.com/MetaCubeX/metacubexd/commit/13bde1e3bfbcd6821bd65faf2a6709cd39cd73df))
+* **connections:** drop double getCloseButton call and fix group-card indent selector ([c593f76](https://github.com/MetaCubeX/metacubexd/commit/c593f76b03db160c750b3a9fb265de7e8815a2a6))
+* **connections:** make composite cell typography honor table-size setting ([8c2c273](https://github.com/MetaCubeX/metacubexd/commit/8c2c273ad7834d82ca62e712cff0fbe0e2a064fa))
+* **connections:** remove duplicate card-mode sort UI and dead enum entry ([7de5682](https://github.com/MetaCubeX/metacubexd/commit/7de568252ae5d748bb19d27d192601c747c8e83b))
+
+## [1.246.3](https://github.com/MetaCubeX/metacubexd/compare/v1.246.2...v1.246.3) (2026-05-03)
+
+
+### Bug Fixes
+
+* avoid rewriting docker config asset ([119adcd](https://github.com/MetaCubeX/metacubexd/commit/119adcd5d97012236a45e941bb140eafa74a7c3d))
+
+## [1.246.2](https://github.com/MetaCubeX/metacubexd/compare/v1.246.1...v1.246.2) (2026-04-30)
+
+
+### Bug Fixes
+
+* build docker image on native builder platform ([6a87b05](https://github.com/MetaCubeX/metacubexd/commit/6a87b0579e359c592dc729bb1c8e186960e8061b))
+
+## [1.246.1](https://github.com/MetaCubeX/metacubexd/compare/v1.246.0...v1.246.1) (2026-04-30)
+
+
+### Bug Fixes
+
+* restore release CI build ([4634095](https://github.com/MetaCubeX/metacubexd/commit/46340951cd08dd8f2b2a57366e017d4dbdeb108f))
+
+## [1.246.0](https://github.com/MetaCubeX/metacubexd/compare/v1.245.1...v1.246.0) (2026-04-30)
+
+
+### Features
+
+* **traffic:** improve data usage analytics ([#1959](https://github.com/MetaCubeX/metacubexd/issues/1959)) ([34fa949](https://github.com/MetaCubeX/metacubexd/commit/34fa94971272af42afd7e371d3e6c7719a82af27))
+
+## [1.245.1](https://github.com/MetaCubeX/metacubexd/compare/v1.245.0...v1.245.1) (2026-04-21)
+
+
+### Bug Fixes
+
+* correct logic bugs and improve error handling ([90a601f](https://github.com/MetaCubeX/metacubexd/commit/90a601ffd691100a7f5939fc1a369d0934775d39))
+* make batch latency test reactive and fix keyboard shortcut refresh ([fbdb4a7](https://github.com/MetaCubeX/metacubexd/commit/fbdb4a7f12a5019068f684f0807d10d04d5d746e))
+* resolve TypeScript errors and update dependency compatibility ([83d5c9d](https://github.com/MetaCubeX/metacubexd/commit/83d5c9d9aaec35ea1ea3f48861c492f58adca381))
+
+## [1.245.0](https://github.com/MetaCubeX/metacubexd/compare/v1.244.2...v1.245.0) (2026-04-18)
+
+
+### Features
+
+* **rules:** add rule toggle and match stats ([#1943](https://github.com/MetaCubeX/metacubexd/issues/1943)) ([acdcf3a](https://github.com/MetaCubeX/metacubexd/commit/acdcf3a58aa6a2cf5372a205a27f6d8dfb40764d))
+
+
+### Bug Fixes
+
+* update ky v2 API - prefixUrl to prefix ([#1942](https://github.com/MetaCubeX/metacubexd/issues/1942)) ([e76c7da](https://github.com/MetaCubeX/metacubexd/commit/e76c7da98bf5936da75517e1b2882af9e918f492))
+
+## [1.244.2](https://github.com/MetaCubeX/metacubexd/compare/v1.244.1...v1.244.2) (2026-04-01)
+
+
+### Bug Fixes
+
+* **deps:** override vulnerable transitive dependencies ([252153c](https://github.com/MetaCubeX/metacubexd/commit/252153c59f31fa03f38d54a6fdcb16b22ce9a04a))
+
+## [1.244.1](https://github.com/MetaCubeX/metacubexd/compare/v1.244.0...v1.244.1) (2026-03-31)
+
+
+### Bug Fixes
+
+* disable app manifest for browser compat and show endpoint errors ([#1891](https://github.com/MetaCubeX/metacubexd/issues/1891), [#1859](https://github.com/MetaCubeX/metacubexd/issues/1859)) ([b643425](https://github.com/MetaCubeX/metacubexd/commit/b64342589863932090aafbcfcefcbb37e179b7dd))
+
+## [1.244.0](https://github.com/MetaCubeX/metacubexd/compare/v1.243.2...v1.244.0) (2026-03-31)
+
+
+### Features
+
+* prioritize proxy groups in sorting ([#1929](https://github.com/MetaCubeX/metacubexd/issues/1929)) ([9d3b079](https://github.com/MetaCubeX/metacubexd/commit/9d3b0794458b80a2dfb3db95242a267271c66135))
+
+## [1.243.2](https://github.com/MetaCubeX/metacubexd/compare/v1.243.1...v1.243.2) (2026-03-28)
+
+
+### Bug Fixes
+
+* correct regex in compareVersions that broke version update detection ([#1927](https://github.com/MetaCubeX/metacubexd/issues/1927)) ([8508936](https://github.com/MetaCubeX/metacubexd/commit/85089366bd4445c93df578eed56f96cc22354b61))
+
+## [1.243.1](https://github.com/MetaCubeX/metacubexd/compare/v1.243.0...v1.243.1) (2026-03-28)
+
+
+### Bug Fixes
+
+* **deps:** override vulnerable transitive dependencies ([4b38650](https://github.com/MetaCubeX/metacubexd/commit/4b38650f5ef7d90a8a03bec17850eeeea59ac5f0))
+
 ## [1.243.0](https://github.com/MetaCubeX/metacubexd/compare/v1.242.0...v1.243.0) (2026-03-14)
 
 

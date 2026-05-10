@@ -146,19 +146,38 @@ defineExpose({
       </div>
 
       <div class="flex items-center justify-between">
-        <span class="text-sm font-medium text-base-content">{{
-          t('useMobileConnectionsTable')
-        }}</span>
-        <label class="relative inline-block h-6 w-11 cursor-pointer">
-          <input
-            v-model="configStore.useMobileConnectionsTable"
-            type="checkbox"
-            class="peer h-0 w-0 opacity-0"
-          />
-          <span
-            class="absolute inset-0 rounded-full bg-base-content/20 transition-all duration-300 peer-checked:bg-primary before:absolute before:bottom-1 before:left-1 before:h-4 before:w-4 before:rounded-full before:bg-base-100 before:shadow-sm before:transition-all before:duration-300 before:content-[''] peer-checked:before:translate-x-5"
-          />
-        </label>
+        <span class="text-sm font-medium text-base-content">
+          {{ t('displayMode') }}
+        </span>
+        <div
+          class="flex gap-1 rounded-lg border border-base-content/12 bg-base-200/60 p-1"
+        >
+          <label
+            v-for="mode in ['auto', 'table', 'card'] as const"
+            :key="mode"
+            class="cursor-pointer rounded-md px-3 py-1 text-[0.8125rem] font-medium text-base-content/60 transition-all duration-200 hover:bg-base-content/5 hover:text-base-content"
+            :class="{
+              'bg-primary! text-primary-content!':
+                configStore.connectionsDisplayMode === mode,
+            }"
+          >
+            <input
+              v-model="configStore.connectionsDisplayMode"
+              type="radio"
+              :value="mode"
+              class="sr-only"
+            />
+            {{
+              t(
+                mode === 'table'
+                  ? 'tableMode'
+                  : mode === 'card'
+                    ? 'cardMode'
+                    : 'auto',
+              )
+            }}
+          </label>
+        </div>
       </div>
 
       <div class="flex flex-col">

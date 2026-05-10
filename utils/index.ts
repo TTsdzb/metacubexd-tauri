@@ -19,24 +19,41 @@ dayjs.extend(relativeTime)
 dayjs.extend(duration)
 
 // Version comparison helper
-export function compareVersions(v1: string, v2: string): number {
-  const parse = (v: string) =>
-    v
-      .replace(/^v/, '')
-      .split(/[-.+]/)[0]
-      .split('.')
-      .map((n) => Number.parseInt(n, 10) || 0)
+const VERSION_PREFIX_RE = /^v/
+const VERSION_BUILDMETA_RE = /\+.*$/
+const VERSION_PRERELEASE_RE = /-/
 
-  const parts1 = parse(v1)
-  const parts2 = parse(v2)
-  const len = Math.max(parts1.length, parts2.length)
+export function compareVersions(v1: string, v2: string): number {
+  const parse = (v: string) => {
+    const cleaned = v
+      .replace(VERSION_PREFIX_RE, '')
+      .replace(VERSION_BUILDMETA_RE, '')
+    const [main, prerelease] = cleaned.split(VERSION_PRERELEASE_RE)
+    return {
+      parts: (main ?? '').split('.').map((n) => Number.parseInt(n, 10) || 0),
+      prerelease: prerelease || null,
+    }
+  }
+
+  const v1Parsed = parse(v1)
+  const v2Parsed = parse(v2)
+  const len = Math.max(v1Parsed.parts.length, v2Parsed.parts.length)
 
   for (let i = 0; i < len; i++) {
-    const p1 = parts1[i] || 0
-    const p2 = parts2[i] || 0
+    const p1 = v1Parsed.parts[i] || 0
+    const p2 = v2Parsed.parts[i] || 0
     if (p1 > p2) return 1
     if (p1 < p2) return -1
   }
+
+  // If main version parts are equal, compare prerelease
+  // No prerelease > any prerelease (stable is newer)
+  if (!v1Parsed.prerelease && v2Parsed.prerelease) return 1
+  if (v1Parsed.prerelease && !v2Parsed.prerelease) return -1
+  if (v1Parsed.prerelease && v2Parsed.prerelease) {
+    return v1Parsed.prerelease.localeCompare(v2Parsed.prerelease)
+  }
+
   return 0
 }
 
@@ -45,13 +62,19 @@ export function formatBytes(bytes: number) {
 }
 
 // URL helpers
+const URL_PROTOCOL_RE = /^https?:\/\//
+
 export function transformEndpointURL(url: string) {
-  return /^https?:\/\//.test(url) ? url : `${window.location.protocol}//${url}`
+  return URL_PROTOCOL_RE.test(url)
+    ? url
+    : `${typeof window !== 'undefined' ? window.location.protocol : 'http:'}//${url}`
 }
 
+const IPV6_RE = /:.*:/
+const IPV4_RE = /\./
+
 export function formatIPv6(ip: string) {
-  const regexr = /:{1,2}/
-  if (regexr.test(ip)) {
+  if (IPV6_RE.test(ip) && !IPV4_RE.test(ip)) {
     return `[${ip}]`
   }
   return ip
@@ -103,9 +126,12 @@ export function formatDateRange(
 }
 
 // Proxy helpers
-export function formatProxyType(type: string = '', t: (key: string) => string) {
+export function formatProxyType(
+  type: string = '',
+  t: (key: string) => string,
+): string {
   const lt = type.toLowerCase()
-  const formatMap = new Map([
+  const formatMap = new Map<string, string>([
     ['shadowsocks', 'SS'],
     ['shadowsocksr', 'SSR'],
     ['hysteria', 'HY'],
@@ -123,7 +149,7 @@ export function formatProxyType(type: string = '', t: (key: string) => string) {
   ])
 
   if (formatMap.has(lt)) {
-    return formatMap.get(lt)
+    return formatMap.get(lt)!
   }
   return lt
 }
@@ -160,6 +186,7 @@ export function sortProxiesByOrderingType({
   orderingType,
   testUrl,
   getLatencyByName,
+  isProxyGroup,
   latencyQualityMap,
   urlForLatencyTest,
 }: {
@@ -167,6 +194,7 @@ export function sortProxiesByOrderingType({
   orderingType: PROXIES_ORDERING_TYPE
   testUrl: string | null
   getLatencyByName: (name: string, testUrl: string | null) => number
+  isProxyGroup?: (name: string) => boolean
   latencyQualityMap: LatencyQualityMap
   urlForLatencyTest: string
 }) {
@@ -179,6 +207,15 @@ export function sortProxiesByOrderingType({
   return [...proxyNames].sort((a, b) => {
     const prevLatency = getLatencyByName(a, finalTestUrl)
     const nextLatency = getLatencyByName(b, finalTestUrl)
+
+    const prevIsProxyGroup = isProxyGroup?.(a) ?? false
+    const nextIsProxyGroup = isProxyGroup?.(b) ?? false
+    const proxyGroupPriority =
+      Number(nextIsProxyGroup) - Number(prevIsProxyGroup)
+
+    if (proxyGroupPriority !== 0) {
+      return proxyGroupPriority
+    }
 
     switch (orderingType) {
       case PROXIES_ORDERING_TYPE.LATENCY_ASC:
@@ -330,19 +367,27 @@ export function getChartThemeColors() {
 }
 
 // SVG encoder for proxy icons
+const SVG_QUOTE_RE = /"/g
+const SVG_PERCENT_RE = /%/g
+const SVG_HASH_RE = /#/g
+const SVG_LBRACE_RE = /\{/g
+const SVG_RBRACE_RE = /\}/g
+const SVG_LT_RE = /</g
+const SVG_GT_RE = />/g
+
 export function encodeSvg(svg: string) {
   return svg
     .replace(
       '<svg',
-      ~svg.indexOf('xmlns')
+      svg.includes('xmlns')
         ? '<svg'
         : '<svg xmlns="http://www.w3.org/2000/svg"',
     )
-    .replace(/"/g, "'")
-    .replace(/%/g, '%25')
-    .replace(/#/g, '%23')
-    .replace(/\{/g, '%7B')
-    .replace(/\}/g, '%7D')
-    .replace(/</g, '%3C')
-    .replace(/>/g, '%3E')
+    .replace(SVG_QUOTE_RE, "'")
+    .replace(SVG_PERCENT_RE, '%25')
+    .replace(SVG_HASH_RE, '%23')
+    .replace(SVG_LBRACE_RE, '%7B')
+    .replace(SVG_RBRACE_RE, '%7D')
+    .replace(SVG_LT_RE, '%3C')
+    .replace(SVG_GT_RE, '%3E')
 }
