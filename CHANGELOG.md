@@ -1,5 +1,139 @@
 # Changelog
 
+## [1.251.3](https://github.com/MetaCubeX/metacubexd/compare/v1.251.2...v1.251.3) (2026-06-05)
+
+
+### Bug Fixes
+
+* **charts:** use browser local timezone instead of UTC in Highcharts ([#2009](https://github.com/MetaCubeX/metacubexd/issues/2009)) ([47c631b](https://github.com/MetaCubeX/metacubexd/commit/47c631bafdef7b3540b021555612426fdd74a9a9))
+
+## [1.251.2](https://github.com/MetaCubeX/metacubexd/compare/v1.251.1...v1.251.2) (2026-06-05)
+
+
+### Bug Fixes
+
+* **proxies:** sink currently-unreachable nodes when sorting by quality ([a1d504a](https://github.com/MetaCubeX/metacubexd/commit/a1d504aa667724b95e637d931cd0e8787d79b00f))
+* **proxies:** source node tooltip latency chart from kernel history ([d4e8a89](https://github.com/MetaCubeX/metacubexd/commit/d4e8a89cc05a732acaffab2973a6db9a08cc37bf)), closes [#2006](https://github.com/MetaCubeX/metacubexd/issues/2006)
+
+## [1.251.1](https://github.com/MetaCubeX/metacubexd/compare/v1.251.0...v1.251.1) (2026-06-04)
+
+
+### Bug Fixes
+
+* **proxies:** keep latency sparkline within tooltip chart viewBox ([5854d9b](https://github.com/MetaCubeX/metacubexd/commit/5854d9b3d173af0dc8d4ddc9fb314514ed4166f7))
+
+## [1.251.0](https://github.com/MetaCubeX/metacubexd/compare/v1.250.0...v1.251.0) (2026-06-04)
+
+
+### Features
+
+* **proxies:** add unfix action and provider-scoped node health check ([ccc5e72](https://github.com/MetaCubeX/metacubexd/commit/ccc5e727842951242121be32720222ad0a020653))
+
+## [1.250.0](https://github.com/MetaCubeX/metacubexd/compare/v1.249.2...v1.250.0) (2026-06-04)
+
+
+### Features
+
+* **proxies:** add quality-based proxy sorting and per-group sort settings ([#2001](https://github.com/MetaCubeX/metacubexd/issues/2001)) ([112d891](https://github.com/MetaCubeX/metacubexd/commit/112d891dcd7556958b6a4feedb53a72f28865110))
+
+## [1.249.2](https://github.com/MetaCubeX/metacubexd/compare/v1.249.1...v1.249.2) (2026-06-02)
+
+
+### Bug Fixes
+
+* **i18n:** improve Russian locale accuracy and terminology ([#1999](https://github.com/MetaCubeX/metacubexd/issues/1999)) ([99cfb8c](https://github.com/MetaCubeX/metacubexd/commit/99cfb8cb37f90698b8ba331fa68418bdb1cd9378))
+
+## [1.249.1](https://github.com/MetaCubeX/metacubexd/compare/v1.249.0...v1.249.1) (2026-05-30)
+
+
+### Bug Fixes
+
+* **proxies:** reuse measured latency across test urls in the proxies view ([4e4bef2](https://github.com/MetaCubeX/metacubexd/commit/4e4bef2062d78eebe558785dd907614a90d24e9b))
+
+## [1.249.0](https://github.com/MetaCubeX/metacubexd/compare/v1.248.7...v1.249.0) (2026-05-29)
+
+
+### Features
+
+* **proxies:** add compact card sizes and sticky group headers ([70a6050](https://github.com/MetaCubeX/metacubexd/commit/70a60505dd815f40cc0ccb1eb0e9fb4c1a3e5a0e)), closes [#1975](https://github.com/MetaCubeX/metacubexd/issues/1975)
+* **pwa:** restore PWA support ([15a8a8f](https://github.com/MetaCubeX/metacubexd/commit/15a8a8face66945c3205a42e4930b57eb9739d46)), closes [#1986](https://github.com/MetaCubeX/metacubexd/issues/1986)
+
+
+### Performance Improvements
+
+* cut realtime CPU and first-paint cost ([#1987](https://github.com/MetaCubeX/metacubexd/issues/1987)) ([3d9f105](https://github.com/MetaCubeX/metacubexd/commit/3d9f1057a3a92ab531abb94339a950e6bda93969))
+
+## [1.248.7](https://github.com/MetaCubeX/metacubexd/compare/v1.248.6...v1.248.7) (2026-05-29)
+
+
+### Bug Fixes
+
+* **connections:** keep usage history when switching endpoints ([83f283a](https://github.com/MetaCubeX/metacubexd/commit/83f283a130bce7ae26efbff4573454aba2615f47))
+* **queries:** scope cached data to the current endpoint ([38f96a6](https://github.com/MetaCubeX/metacubexd/commit/38f96a6d68fdf2a69f4d146680297d9339028461))
+
+## [1.248.6](https://github.com/MetaCubeX/metacubexd/compare/v1.248.5...v1.248.6) (2026-05-28)
+
+
+### Bug Fixes
+
+* **charts:** dispose highcharts and resize observers on unmount ([f56a237](https://github.com/MetaCubeX/metacubexd/commit/f56a2371f5677833523a01355b70e616a7369529))
+* **connections:** auto-reconnect websockets after backend restart ([6e6c735](https://github.com/MetaCubeX/metacubexd/commit/6e6c735e291d5f302b7673203e29ce15225c1d8b)), closes [#1994](https://github.com/MetaCubeX/metacubexd/issues/1994)
+* **connections:** clear usage tracking before awaiting IndexedDB ([4c705d6](https://github.com/MetaCubeX/metacubexd/commit/4c705d6bfd98cf715124944b7769c5cae76a0e74))
+* **connections:** stop remounting table cells on every update ([fb7e9b2](https://github.com/MetaCubeX/metacubexd/commit/fb7e9b2bd9f9640cbb4b8d9f69c4ee64af73ea48))
+* **overview:** correct Cloudflare network latency probe ([678256d](https://github.com/MetaCubeX/metacubexd/commit/678256d076bafe877745c51b91680d5115ae6e74)), closes [#1993](https://github.com/MetaCubeX/metacubexd/issues/1993)
+* **proxies:** keep multi-group latency test progress stable ([f0ba13b](https://github.com/MetaCubeX/metacubexd/commit/f0ba13b955eb73a0d1a9664e3fe977bf5608cb59))
+* **proxies:** stop recommending nodes that always fail ([a77cb67](https://github.com/MetaCubeX/metacubexd/commit/a77cb676a15ca485e4cb725bc8097cbfc264aa5a))
+* **utils:** compare semver pre-release identifiers per spec ([5a08f30](https://github.com/MetaCubeX/metacubexd/commit/5a08f3051d3b18aad3cef7adcb3e49949777b620))
+
+## [1.248.5](https://github.com/MetaCubeX/metacubexd/compare/v1.248.4...v1.248.5) (2026-05-26)
+
+
+### Bug Fixes
+
+* **proxies:** make provider batch latency test use per-node delay API ([6d9122f](https://github.com/MetaCubeX/metacubexd/commit/6d9122f437a23998e01e7647ddd9f4bf2c9c6054))
+
+## [1.248.4](https://github.com/MetaCubeX/metacubexd/compare/v1.248.3...v1.248.4) (2026-05-23)
+
+
+### Bug Fixes
+
+* **ui:** stabilize sidebar toggle, overview cards, and logo layout ([0b1aeac](https://github.com/MetaCubeX/metacubexd/commit/0b1aeaca416e183b76e0eed63f5206be05c68f2e))
+
+## [1.248.3](https://github.com/MetaCubeX/metacubexd/compare/v1.248.2...v1.248.3) (2026-05-23)
+
+
+### Bug Fixes
+
+* **proxies:** enforce singleton latency history popover ([1ef2f21](https://github.com/MetaCubeX/metacubexd/commit/1ef2f21280b169f3b47c11d7701f0f561dcd137f))
+
+## [1.248.2](https://github.com/MetaCubeX/metacubexd/compare/v1.248.1...v1.248.2) (2026-05-23)
+
+
+### Bug Fixes
+
+* **proxies:** keep latency tests resilient and update history live ([5b15390](https://github.com/MetaCubeX/metacubexd/commit/5b153903d01599c010d30e44ebf0d1460dfb2302))
+
+## [1.248.1](https://github.com/MetaCubeX/metacubexd/compare/v1.248.0...v1.248.1) (2026-05-19)
+
+
+### Bug Fixes
+
+* stabilize latency testing state ([daf4b14](https://github.com/MetaCubeX/metacubexd/commit/daf4b14050578e2f5d0887e52eb0b80c50c331f4))
+
+## [1.248.0](https://github.com/MetaCubeX/metacubexd/compare/v1.247.1...v1.248.0) (2026-05-18)
+
+
+### Features
+
+* **proxies:** allow manual latency color thresholds ([c3614fd](https://github.com/MetaCubeX/metacubexd/commit/c3614fd254a94feab395c2bc946f7374cc333594)), closes [#1980](https://github.com/MetaCubeX/metacubexd/issues/1980)
+
+## [1.247.1](https://github.com/MetaCubeX/metacubexd/compare/v1.247.0...v1.247.1) (2026-05-15)
+
+
+### Bug Fixes
+
+* **proxies:** restore latency tooltip placement next to its anchor ([0a0b15e](https://github.com/MetaCubeX/metacubexd/commit/0a0b15e4430c80406effeced284c8b7ffcc70796)), closes [#1976](https://github.com/MetaCubeX/metacubexd/issues/1976)
+
 ## [1.247.0](https://github.com/MetaCubeX/metacubexd/compare/v1.246.3...v1.247.0) (2026-05-09)
 
 

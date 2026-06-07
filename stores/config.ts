@@ -11,6 +11,7 @@ import {
   LATENCY_QUALITY_MAP_HTTP,
   LATENCY_QUALITY_MAP_HTTPS,
   LOG_LEVEL,
+  PROXIES_CARD_SIZE,
   PROXIES_DISPLAY_MODE,
   PROXIES_ORDERING_TYPE,
   PROXIES_PREVIEW_TYPE,
@@ -41,7 +42,7 @@ export const useConfigStore = defineStore('config', () => {
   )
   const proxiesOrderingType = useLocalStorage<PROXIES_ORDERING_TYPE>(
     'proxiesOrderingType',
-    PROXIES_ORDERING_TYPE.NATURAL,
+    PROXIES_ORDERING_TYPE.QUALITY_DESC,
   )
   const proxiesDisplayMode = useLocalStorage<PROXIES_DISPLAY_MODE>(
     'proxiesDisplayMode',
@@ -51,6 +52,13 @@ export const useConfigStore = defineStore('config', () => {
     'renderProxiesInTwoColumns',
     true,
   )
+  // Node-card density: controls how many cards fit per row (see PROXIES_CARD_SIZE_MIN_WIDTH)
+  const proxiesCardSize = useLocalStorage<PROXIES_CARD_SIZE>(
+    'proxiesCardSize',
+    PROXIES_CARD_SIZE.COMFORTABLE,
+  )
+  // Keep the group header pinned to the top while scrolling a long expanded group
+  const stickyGroupHeader = useLocalStorage('stickyGroupHeader', true)
   const hideUnAvailableProxies = useLocalStorage(
     'hideUnAvailableProxies',
     false,
@@ -64,6 +72,9 @@ export const useConfigStore = defineStore('config', () => {
     'latencyTestTimeoutDuration',
     5000,
   )
+  // Latency color thresholds. 0 = auto (use protocol-based defaults).
+  const latencyMediumThreshold = useLocalStorage('latencyMediumThreshold', 0)
+  const latencyHighThreshold = useLocalStorage('latencyHighThreshold', 0)
   const iconHeight = useLocalStorage('iconHeight', 24)
   const iconMarginRight = useLocalStorage('iconMarginRight', 8)
 
@@ -145,16 +156,39 @@ export const useConfigStore = defineStore('config', () => {
   // Overview settings
   const showNetworkTopology = useLocalStorage('showNetworkTopology', false)
 
+  // Data usage tracking. When enabled, every connections WebSocket message is
+  // diffed per-connection and buffered into IndexedDB so the Data Usage page
+  // can show historical stats. This is a metacubexd-only feature that runs on
+  // EVERY page (the connections socket is global); turning it off removes the
+  // largest piece of per-second background work for users who don't need it.
+  const enableDataUsageTracking = useLocalStorage(
+    'enableDataUsageTracking',
+    true,
+  )
+
   // Computed
   const isLatencyTestByHttps = computed(() =>
     urlForLatencyTest.value.startsWith('https'),
   )
 
-  const latencyQualityMap = computed(() =>
-    isLatencyTestByHttps.value
+  const latencyQualityMap = computed(() => {
+    const defaults = isLatencyTestByHttps.value
       ? LATENCY_QUALITY_MAP_HTTPS
-      : LATENCY_QUALITY_MAP_HTTP,
-  )
+      : LATENCY_QUALITY_MAP_HTTP
+    const medium =
+      latencyMediumThreshold.value > 0
+        ? latencyMediumThreshold.value
+        : defaults.MEDIUM
+    const high =
+      latencyHighThreshold.value > 0
+        ? latencyHighThreshold.value
+        : defaults.HIGH
+    return {
+      NOT_CONNECTED: defaults.NOT_CONNECTED,
+      MEDIUM: medium,
+      HIGH: high,
+    }
+  })
 
   const tableSizeClassName = (size: TAILWINDCSS_SIZE) => {
     const classMap: Record<TAILWINDCSS_SIZE, string> = {
@@ -169,13 +203,17 @@ export const useConfigStore = defineStore('config', () => {
   // Reset functions
   const resetProxiesSettings = () => {
     proxiesPreviewType.value = PROXIES_PREVIEW_TYPE.Auto
-    proxiesOrderingType.value = PROXIES_ORDERING_TYPE.NATURAL
+    proxiesOrderingType.value = PROXIES_ORDERING_TYPE.QUALITY_DESC
     proxiesDisplayMode.value = PROXIES_DISPLAY_MODE.CARD
     renderProxiesInTwoColumns.value = true
+    proxiesCardSize.value = PROXIES_CARD_SIZE.COMFORTABLE
+    stickyGroupHeader.value = true
     hideUnAvailableProxies.value = false
     urlForLatencyTest.value = 'https://www.gstatic.com/generate_204'
     autoCloseConns.value = true
     latencyTestTimeoutDuration.value = 5000
+    latencyMediumThreshold.value = 0
+    latencyHighThreshold.value = 0
     iconHeight.value = 24
     iconMarginRight.value = 8
   }
@@ -189,6 +227,7 @@ export const useConfigStore = defineStore('config', () => {
     favNightTheme.value = 'sunset'
     curTheme.value = 'sunset'
     defaultPage.value = 'overview'
+    enableDataUsageTracking.value = true
   }
 
   return {
@@ -203,10 +242,14 @@ export const useConfigStore = defineStore('config', () => {
     proxiesOrderingType,
     proxiesDisplayMode,
     renderProxiesInTwoColumns,
+    proxiesCardSize,
+    stickyGroupHeader,
     hideUnAvailableProxies,
     urlForLatencyTest,
     autoCloseConns,
     latencyTestTimeoutDuration,
+    latencyMediumThreshold,
+    latencyHighThreshold,
     iconHeight,
     iconMarginRight,
     // Endpoint
@@ -233,6 +276,8 @@ export const useConfigStore = defineStore('config', () => {
     clientSourceIPTags,
     // Overview
     showNetworkTopology,
+    // Data usage
+    enableDataUsageTracking,
     // Computed
     isLatencyTestByHttps,
     latencyQualityMap,

@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import Highcharts from 'highcharts'
+import type Highcharts from 'highcharts'
+import { loadHighcharts } from '~/composables/useHighcharts'
 import { formatBytes, getChartThemeColors } from '~/utils'
 
 interface TrendPoint {
@@ -20,20 +21,14 @@ const { t, locale } = useI18n()
 const configStore = useConfigStore()
 const containerRef = ref<HTMLDivElement>()
 let chart: Highcharts.Chart | undefined
-
-// Configure Highcharts to use local time (global setting)
-// In Highcharts v12, useUTC was removed; local timezone is now the default
-if (typeof window !== 'undefined') {
-  Highcharts.setOptions({
-    time: {},
-  })
-}
+let hc: typeof Highcharts | undefined
+let resizeObserver: ResizeObserver | undefined
 
 const initChart = () => {
-  if (!containerRef.value) return
+  if (!containerRef.value || !hc) return
   const themeColors = getChartThemeColors()
 
-  chart = Highcharts.chart(containerRef.value, {
+  chart = hc.chart(containerRef.value, {
     chart: { type: 'areaspline', backgroundColor: 'transparent' },
     title: { text: undefined },
     credits: { enabled: false },
@@ -61,7 +56,7 @@ const initChart = () => {
     tooltip: {
       shared: true,
       formatter() {
-        const time = Highcharts.dateFormat('%Y-%m-%d %H:%M', this.x as number)
+        const time = hc!.dateFormat('%Y-%m-%d %H:%M', this.x as number)
         let html = `<b>${time}</b><br/>`
         this.points?.forEach((p) => {
           html += `<span style="color:${p.color}">\u25CF</span> ${p.series.name}: <b>${formatBytes(p.y as number)}</b><br/>`
@@ -115,22 +110,25 @@ watch([() => props.startTime, () => props.endTime], () => {
   }
 })
 
-watch([configStore.curTheme], () => {
-  if (chart) {
-    const themeColors = getChartThemeColors()
-    chart.update({
-      xAxis: {
-        labels: { style: { color: themeColors.textColor } },
-        lineColor: themeColors.lineColor,
-      },
-      yAxis: {
-        labels: { style: { color: themeColors.textColor } },
-        gridLineColor: themeColors.gridLineColor,
-      },
-      legend: { itemStyle: { color: themeColors.textColor } },
-    })
-  }
-})
+watch(
+  () => configStore.curTheme,
+  () => {
+    if (chart) {
+      const themeColors = getChartThemeColors()
+      chart.update({
+        xAxis: {
+          labels: { style: { color: themeColors.textColor } },
+          lineColor: themeColors.lineColor,
+        },
+        yAxis: {
+          labels: { style: { color: themeColors.textColor } },
+          gridLineColor: themeColors.gridLineColor,
+        },
+        legend: { itemStyle: { color: themeColors.textColor } },
+      })
+    }
+  },
+)
 
 watch(locale, () => {
   if (chart) {
@@ -139,10 +137,11 @@ watch(locale, () => {
   }
 })
 
-onMounted(() => {
+onMounted(async () => {
+  hc = await loadHighcharts()
   initChart()
   updateData()
-  const resizeObserver = new ResizeObserver(() => {
+  resizeObserver = new ResizeObserver(() => {
     if (chart && containerRef.value) {
       chart.setSize(
         containerRef.value.clientWidth,
@@ -155,7 +154,9 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
-  if (chart) chart.destroy()
+  resizeObserver?.disconnect()
+  chart?.destroy()
+  chart = undefined
 })
 </script>
 

@@ -4,6 +4,9 @@ import { getCurrentScope, onScopeDispose } from 'vue'
 import { useMockMode } from './useApi'
 import { useMockData } from './useMockData'
 
+// Delay before retrying after an unexpected socket close (e.g. "Restart Core").
+const RECONNECT_DELAY = 3000
+
 export function useBackendWebSocket() {
   const endpointStore = useEndpointStore()
   const connectionsStore = useConnectionsStore()
@@ -21,6 +24,33 @@ export function useBackendWebSocket() {
 
   // Mock mode intervals
   let mockInterval: ReturnType<typeof setInterval> | null = null
+
+  // Auto-reconnect bookkeeping
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+
+  // Close a socket WITHOUT triggering its auto-reconnect handler. Used for
+  // intentional teardown (reconnect, unmount), so we don't reconnect a socket
+  // we closed on purpose.
+  const closeWs = (
+    ws: { ws: TauriWebSocket; removeListener: () => void } | null,
+  ) => {
+    if (!ws) return
+    ws.removeListener()
+    ws.ws.disconnect()
+  }
+
+  // Debounced reconnect. A backend restart ("Restart Core") drops every socket
+  // at once, so coalesce into a single attempt; each failed attempt's socket
+  // fires onclose again, so this keeps retrying until the backend is back.
+  const scheduleReconnect = () => {
+    if (useMockMode()) return
+    if (reconnectTimer) return
+    if (!endpointStore.currentEndpoint) return
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null
+      connect()
+    }, RECONNECT_DELAY)
+  }
 
   const createWebSocket = async (
     path: string,
@@ -40,6 +70,11 @@ export function useBackendWebSocket() {
     )
 
     const removeListener = ws.addListener((msg) => {
+      if (msg.type === 'Close') {
+        removeListener()
+        scheduleReconnect()
+        return
+      }
       if (msg.type !== 'Text') return
       try {
         const data = JSON.parse(msg.data)
@@ -181,20 +216,22 @@ export function useBackendWebSocket() {
 
   // Disconnect all WebSockets
   const disconnect = () => {
+    // Cancel any pending reconnect — this is an intentional teardown.
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer)
+      reconnectTimer = null
+    }
+
     // Clear mock interval if in mock mode
     if (mockInterval) {
       clearInterval(mockInterval)
       mockInterval = null
     }
 
-    connectionsWs?.removeListener()
-    connectionsWs?.ws.disconnect()
-    trafficWs?.removeListener()
-    trafficWs?.ws.disconnect()
-    memoryWs?.removeListener()
-    memoryWs?.ws.disconnect()
-    logsWs?.removeListener()
-    logsWs?.ws.disconnect()
+    closeWs(connectionsWs)
+    closeWs(trafficWs)
+    closeWs(memoryWs)
+    closeWs(logsWs)
 
     connectionsWs = null
     trafficWs = null
@@ -216,6 +253,11 @@ export function useBackendWebSocket() {
       `${wsUrl}/logs?${params.toString()}`,
     )
     const removeListener = ws.addListener((msg) => {
+      if (msg.type === 'Close') {
+        removeListener()
+        scheduleReconnect()
+        return
+      }
       if (msg.type !== 'Text') return
       try {
         const data = JSON.parse(msg.data) as Log
@@ -230,8 +272,7 @@ export function useBackendWebSocket() {
 
   // Reconnect (e.g., when log level changes)
   const reconnectLogs = () => {
-    logsWs?.removeListener()
-    logsWs?.ws.disconnect()
+    closeWs(logsWs)
     if (useMockMode()) {
       logsWs = null
       return

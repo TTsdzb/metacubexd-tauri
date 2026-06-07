@@ -1,19 +1,18 @@
-import type {
-  LATENCY_QUALITY_MAP_HTTP,
-  LATENCY_QUALITY_MAP_HTTPS,
-} from '~/constants'
+import type { NodePerformanceData } from '~/stores/nodeRecommendation'
 import byteSize from 'byte-size'
 import dayjs from 'dayjs'
 import duration from 'dayjs/plugin/duration'
 import relativeTime from 'dayjs/plugin/relativeTime'
 import { PROXIES_ORDERING_TYPE } from '~/constants'
+import { calculateNodeScore } from './nodeScoring'
 import 'dayjs/locale/zh-cn'
 import 'dayjs/locale/ru'
 
-// Type for latency quality map (can be either HTTP or HTTPS)
-type LatencyQualityMap =
-  | typeof LATENCY_QUALITY_MAP_HTTP
-  | typeof LATENCY_QUALITY_MAP_HTTPS
+interface LatencyQualityMap {
+  NOT_CONNECTED: number
+  MEDIUM: number
+  HIGH: number
+}
 
 dayjs.extend(relativeTime)
 dayjs.extend(duration)
@@ -21,17 +20,55 @@ dayjs.extend(duration)
 // Version comparison helper
 const VERSION_PREFIX_RE = /^v/
 const VERSION_BUILDMETA_RE = /\+.*$/
-const VERSION_PRERELEASE_RE = /-/
+const PRERELEASE_NUMERIC_RE = /^\d+$/
+
+// Compare two SemVer pre-release strings (the part after the first `-`) per the
+// SemVer precedence rules: identifiers are dot-separated and compared left to
+// right; purely numeric identifiers compare numerically, numeric identifiers
+// rank below non-numeric ones, and a longer set of identifiers wins when all
+// preceding ones are equal.
+function comparePrerelease(a: string, b: string): number {
+  const aIds = a.split('.')
+  const bIds = b.split('.')
+  const len = Math.max(aIds.length, bIds.length)
+
+  for (let i = 0; i < len; i++) {
+    const aId = aIds[i]
+    const bId = bIds[i]
+    if (aId === undefined) return -1
+    if (bId === undefined) return 1
+
+    const aIsNum = PRERELEASE_NUMERIC_RE.test(aId)
+    const bIsNum = PRERELEASE_NUMERIC_RE.test(bId)
+
+    if (aIsNum && bIsNum) {
+      const diff = Number(aId) - Number(bId)
+      if (diff !== 0) return diff > 0 ? 1 : -1
+    } else if (aIsNum !== bIsNum) {
+      // Numeric identifiers always have lower precedence than non-numeric.
+      return aIsNum ? -1 : 1
+    } else {
+      const cmp = aId.localeCompare(bId)
+      if (cmp !== 0) return cmp > 0 ? 1 : -1
+    }
+  }
+
+  return 0
+}
 
 export function compareVersions(v1: string, v2: string): number {
   const parse = (v: string) => {
     const cleaned = v
       .replace(VERSION_PREFIX_RE, '')
       .replace(VERSION_BUILDMETA_RE, '')
-    const [main, prerelease] = cleaned.split(VERSION_PRERELEASE_RE)
+    // Split on the FIRST `-` only — the whole remainder is the pre-release
+    // string, which may itself contain `-` (e.g. `1.0.0-beta-1`).
+    const dashIndex = cleaned.indexOf('-')
+    const main = dashIndex === -1 ? cleaned : cleaned.slice(0, dashIndex)
+    const prerelease = dashIndex === -1 ? null : cleaned.slice(dashIndex + 1)
     return {
-      parts: (main ?? '').split('.').map((n) => Number.parseInt(n, 10) || 0),
-      prerelease: prerelease || null,
+      parts: main.split('.').map((n) => Number.parseInt(n, 10) || 0),
+      prerelease,
     }
   }
 
@@ -46,12 +83,12 @@ export function compareVersions(v1: string, v2: string): number {
     if (p1 < p2) return -1
   }
 
-  // If main version parts are equal, compare prerelease
-  // No prerelease > any prerelease (stable is newer)
+  // If main version parts are equal, compare prerelease.
+  // No prerelease > any prerelease (stable is newer).
   if (!v1Parsed.prerelease && v2Parsed.prerelease) return 1
   if (v1Parsed.prerelease && !v2Parsed.prerelease) return -1
   if (v1Parsed.prerelease && v2Parsed.prerelease) {
-    return v1Parsed.prerelease.localeCompare(v2Parsed.prerelease)
+    return comparePrerelease(v1Parsed.prerelease, v2Parsed.prerelease)
   }
 
   return 0
@@ -189,6 +226,7 @@ export function sortProxiesByOrderingType({
   isProxyGroup,
   latencyQualityMap,
   urlForLatencyTest,
+  performanceData,
 }: {
   proxyNames: string[]
   orderingType: PROXIES_ORDERING_TYPE
@@ -197,6 +235,7 @@ export function sortProxiesByOrderingType({
   isProxyGroup?: (name: string) => boolean
   latencyQualityMap: LatencyQualityMap
   urlForLatencyTest: string
+  performanceData?: Map<string, NodePerformanceData>
 }) {
   if (orderingType === PROXIES_ORDERING_TYPE.NATURAL) {
     return proxyNames
@@ -233,6 +272,40 @@ export function sortProxiesByOrderingType({
 
       case PROXIES_ORDERING_TYPE.NAME_DESC:
         return b.localeCompare(a)
+
+      case PROXIES_ORDERING_TYPE.QUALITY_ASC: {
+        // A node that is unreachable right now must sink to the bottom no matter
+        // how good its historical quality score is — a stale good run shouldn't
+        // outrank a node that actually connects.
+        if (prevLatency === latencyQualityMap.NOT_CONNECTED) return 1
+        if (nextLatency === latencyQualityMap.NOT_CONNECTED) return -1
+
+        const prevData = performanceData?.get(a)
+        const nextData = performanceData?.get(b)
+        const prevScore = prevData ? calculateNodeScore(prevData) : 0
+        const nextScore = nextData ? calculateNodeScore(nextData) : 0
+
+        if (prevScore === 0 && nextScore > 0) return 1
+        if (nextScore === 0 && prevScore > 0) return -1
+        return prevScore - nextScore
+      }
+
+      case PROXIES_ORDERING_TYPE.QUALITY_DESC: {
+        // A node that is unreachable right now must sink to the bottom no matter
+        // how good its historical quality score is — a stale good run shouldn't
+        // outrank a node that actually connects.
+        if (prevLatency === latencyQualityMap.NOT_CONNECTED) return 1
+        if (nextLatency === latencyQualityMap.NOT_CONNECTED) return -1
+
+        const prevData = performanceData?.get(a)
+        const nextData = performanceData?.get(b)
+        const prevScore = prevData ? calculateNodeScore(prevData) : 0
+        const nextScore = nextData ? calculateNodeScore(nextData) : 0
+
+        if (prevScore === 0 && nextScore > 0) return 1
+        if (nextScore === 0 && prevScore > 0) return -1
+        return nextScore - prevScore
+      }
 
       default:
         return 0
