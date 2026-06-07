@@ -2091,7 +2091,7 @@ dependencies = [
 
 [[package]]
 name = "metacubexd"
-version = "1.247.0"
+version = "1.251.3"
 dependencies = [
  "log",
  "serde",
