@@ -225,7 +225,13 @@ Then confirm the workspace members are exactly the expected set:
 
 Run: `pnpm ls -r --depth -1`
 
-Expected: entries for `metacubexd-monorepo`, `@metacubexd/config-editor`, `@metacubexd/tauri`, and `@metacubexd/ui`, and **no** entry for `@metacubexd/desktop` or `@metacubexd/server`.
+Expected: entries for `metacubexd-monorepo`, `@metacubexd/agent`, `@metacubexd/config-editor`, `@metacubexd/tauri`, and `@metacubexd/ui`, and **no** entry for `@metacubexd/desktop` or `@metacubexd/server`.
+
+`@metacubexd/agent` stays a workspace member: only the `apps/*` glob narrows, and
+`packages/*` still matches it. That is deliberate — its dependencies are three
+small catalog entries already in the tree (`h3`, `yaml`, `tree-kill`), so
+excluding it would buy nothing and would add merge surface if upstream ever
+makes `packages/ui` depend on it. Nothing builds it.
 
 - [ ] **Step 9: Commit**
 
