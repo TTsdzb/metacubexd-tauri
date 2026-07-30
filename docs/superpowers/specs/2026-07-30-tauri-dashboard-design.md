@@ -62,21 +62,44 @@ Files edited outside `apps/tauri`:
 
 - `pnpm-workspace.yaml` — `apps/*` becomes `apps/tauri`; add the
   `@tauri-apps/*` package versions to the catalog.
-- `package.json` (root) — add `dev:tauri` and `build:tauri`.
+- `package.json` (root) — see below.
 - `.gitignore` — ignore `apps/tauri/src-tauri/target/` and the generated
   `apps/tauri/src-tauri/shim.js`.
 
 Nothing else.
 
-Consequence, accepted deliberately: once `apps/desktop` and `apps/server` leave
-the workspace globs, the root scripts that filter on them (`dev:desktop`,
-`build:desktop`, `build:server`, `build`, `generate`) stop resolving. They are
-left in place unchanged rather than rewritten — they are dead weight either way,
-and editing them only widens the merge surface for no benefit. `dev`, `dev:ui`,
-`build:ui`, `typecheck`, and `lint` continue to work.
+### Root scripts
 
-Upstream's GitHub Actions workflows are likewise left untouched and inert;
-turning them off belongs with the deferred CI work.
+Once `apps/desktop` and `apps/server` leave the workspace globs, every script
+filtering on them stops resolving. Those scripts are **deleted** rather than
+left in place: a command that fails on an unresolvable `--filter` is a trap for
+a future reader who reasonably expects `pnpm build` to build something. The root
+`package.json` is edited regardless to add the Tauri scripts, so removing four
+more lines adds almost nothing to the merge surface, and upstream changes root
+scripts rarely.
+
+Resulting script set:
+
+```jsonc
+"dev":          "pnpm dev:ui",           // unchanged — browser dev against a live core
+"dev:ui":       "pnpm --filter @metacubexd/ui dev",
+"dev:tauri":    "pnpm --filter @metacubexd/tauri dev",     // new
+"build":        "pnpm build:tauri",       // was: build:ui && build:server
+"build:ui":     "pnpm --filter @metacubexd/ui generate",
+"build:tauri":  "pnpm --filter @metacubexd/tauri build",   // new
+"generate":     "…unchanged…",            // no dead filter; still works
+"typecheck":    "pnpm -r typecheck",      // -r auto-skips removed workspaces
+"lint":         "pnpm -r lint",
+"prepare":      "husky",
+"prepare:husky": "husky",
+```
+
+Deleted: `dev:server`, `dev:desktop`, `build:server`, `build:desktop`. `build`
+is repointed at `build:tauri` rather than deleted, because the Tauri app is this
+fork's product.
+
+Upstream's GitHub Actions workflows are left untouched and inert; turning them
+off belongs with the deferred CI work.
 
 ## Frontend: upstream's own build output
 
