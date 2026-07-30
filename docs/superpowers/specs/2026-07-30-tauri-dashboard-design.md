@@ -1,0 +1,279 @@
+# Tauri Dashboard Shell — Design
+
+Date: 2026-07-30
+Status: Approved
+
+## Goal
+
+Ship the metacubexd dashboard as a native Tauri desktop app that controls a
+user-managed Mihomo kernel — on this machine or another host on the LAN —
+without the CORS and mixed-content restrictions a browser imposes, and without
+Electron.
+
+The bundled-kernel management features (Control Agent, profile store, kernel
+supervisor) are unwanted. They are removed from the _build_, not from the
+_tree_.
+
+## Constraints
+
+1. **Upstream merges stay cheap.** This fork tracks a fast-moving upstream
+   (`MetaCubeX/metacubexd`). Every file this design adds is new. Exactly three
+   upstream-owned files are edited, each by a few lines: `pnpm-workspace.yaml`,
+   the root `package.json`, and `.gitignore`.
+2. **`packages/ui` is byte-for-byte upstream.** Not one line changes. All
+   Tauri-specific behavior is injected from outside the Nuxt app.
+3. **No Electron**, and no `pnpm install` of Electron's toolchain.
+
+## Decisions
+
+| Question                                                               | Decision                                                            | Rationale                                                                                                                                                                                                                |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Redundant workspaces (`packages/agent`, `apps/desktop`, `apps/server`) | Keep the files, drop them from the workspace globs                  | Deleting them turns every upstream commit that touches them into a modify/delete conflict. Excluding them from `pnpm-workspace.yaml` skips their installs and builds while keeping merges clean.                         |
+| Native transport injection                                             | Global `fetch` / `WebSocket` shim, same-origin passthrough          | Covers all current and future call sites in `packages/ui` without editing it.                                                                                                                                            |
+| Shim delivery                                                          | Tauri `initialization_script`, **not** a Nuxt layer                 | A Nuxt layer extending `packages/ui` risks `~/` alias resolution, which `packages/ui` relies on pervasively. `initialization_script` runs at document-start in both dev and production with no Nuxt or HTML involvement. |
+| Window integration                                                     | Custom title bar via injected bridge, plus window-state persistence | Reuses the `TitleBar` component already in `packages/ui`.                                                                                                                                                                |
+| Targets                                                                | Local Linux dev + build                                             | Windows/macOS bundles and a GitHub Actions release workflow are **deferred until the basic app is confirmed working** — see "Deferred".                                                                                  |
+
+## Layout
+
+```
+apps/tauri/
+  package.json              dev / build / typecheck / test scripts
+  shim/
+    index.ts                installs the patches, in order
+    fetch.ts                cross-origin -> @tauri-apps/plugin-http
+    websocket.ts            WebSocket-compatible adapter
+    bridge.ts               window.metacubexd window controls
+    origin.ts               the same-origin routing predicate
+    __tests__/*.spec.ts     vitest; plugin modules mocked, no webview
+  build-shim.mjs            esbuild -> src-tauri/shim.js (IIFE, no imports)
+  vitest.config.ts
+  tsconfig.json
+  src-tauri/
+    Cargo.toml
+    tauri.conf.json
+    capabilities/default.json
+    src/main.rs
+    src/lib.rs
+    icons/
+```
+
+Files edited outside `apps/tauri`:
+
+- `pnpm-workspace.yaml` — `apps/*` becomes `apps/tauri`; add the
+  `@tauri-apps/*` package versions to the catalog.
+- `package.json` (root) — add `dev:tauri` and `build:tauri`.
+- `.gitignore` — ignore `apps/tauri/src-tauri/target/` and the generated
+  `apps/tauri/src-tauri/shim.js`.
+
+Nothing else.
+
+Consequence, accepted deliberately: once `apps/desktop` and `apps/server` leave
+the workspace globs, the root scripts that filter on them (`dev:desktop`,
+`build:desktop`, `build:server`, `build`, `generate`) stop resolving. They are
+left in place unchanged rather than rewritten — they are dead weight either way,
+and editing them only widens the merge surface for no benefit. `dev`, `dev:ui`,
+`build:ui`, `typecheck`, and `lint` continue to work.
+
+Upstream's GitHub Actions workflows are likewise left untouched and inert;
+turning them off belongs with the deferred CI work.
+
+## Frontend: upstream's own build output
+
+`tauri.conf.json` sets `frontendDist` to `../../../packages/ui/.output/public`
+and consumes it in place. There is no copy step and no post-processing of
+`index.html`.
+
+That output comes from a script that **already exists** in
+`packages/ui/package.json`:
+
+```
+generate:desktop = NUXT_APP_BASE_URL=./ MCXD_DISABLE_PWA=true nuxt generate
+```
+
+Relative base URL suits the custom protocol origin; PWA/service-worker is
+pointless in a packaged app and only risks stale caches. Hash routing is already
+the UI default, so deep links work under the custom protocol.
+
+Dev mode sets `devUrl: http://localhost:3000` with `beforeDevCommand` starting
+`nuxt dev`, so Vite HMR works normally inside the Tauri window.
+
+## The shim
+
+Built by esbuild into a single dependency-free IIFE at
+`src-tauri/shim.js`, embedded with `include_str!` and registered via
+`WebviewWindowBuilder::initialization_script`. It runs in the main frame before
+any page script, on every navigation and reload, in dev and production alike.
+Tauri's own IPC bootstrap runs first, so `window.__TAURI_INTERNALS__` — which
+the plugin JS packages call through — is available.
+
+### Routing rule
+
+One rule governs both transports:
+
+```
+same-origin or relative URL  ->  the captured native implementation
+anything else                ->  the Tauri plugin
+```
+
+Same-origin covers Nuxt's internal requests, `config.js`, locally served fonts,
+and — crucially — Vite's HMR WebSocket in dev. Cross-origin covers the user's
+Mihomo backend and the GitHub release-check API.
+
+The predicate resolves the URL against `location.origin` and compares origins;
+non-`http(s)`/`ws(s)` schemes (`blob:`, `data:`) always take the native path.
+
+### fetch
+
+`@tauri-apps/plugin-http`'s `fetch` replaces `globalThis.fetch`. The request is
+performed by Rust's reqwest, so there is no CORS preflight and no
+mixed-content block when the dashboard (custom-protocol origin) talks to a
+plain-`http` LAN core.
+
+This covers every HTTP call site in `packages/ui` without naming any of them:
+
+- the three `ky.create()` clients (`useApi.ts` backend + GitHub,
+  `useControlApi.ts`),
+- the bare `ky.get()` calls (`checkEndpointAPI`, asset fetches),
+- the raw `fetch()` latency probe in `useLatencyTest.ts`.
+
+`ky@2.0.2` resolves `options.fetch ?? globalThis.fetch.bind(globalThis)` per
+request (`distribution/core/Ky.js:284`), not at module load, so a patch
+installed before app boot is picked up by clients created later. Verified
+against the installed version.
+
+Note: `useLatencyTest` probes with `mode: 'no-cors'`. Through the native path
+that flag is meaningless and the request simply succeeds, which makes the
+measurement _more_ accurate than in a browser.
+
+### WebSocket
+
+`globalThis.WebSocket` is replaced by an adapter class over
+`@tauri-apps/plugin-websocket`. `packages/ui` uses exactly two constructor
+sites (`useWebSocket.ts:74`, `useWebSocket.ts:256`) and touches only
+`onmessage`, `onerror`, `onclose`, and `close()`.
+
+Two impedance mismatches to absorb:
+
+1. **Sync constructor, async connect.** `new WebSocket(url)` returns
+   immediately; `WebSocket.connect(url)` returns a promise. The adapter starts
+   in `CONNECTING`, buffers `send()` calls, and dispatches handlers assigned
+   after construction — which is what the call sites do.
+2. **Message envelope.** The plugin delivers
+   `{ type: 'Text' | 'Binary' | 'Close' | 'Ping' | 'Pong', data }`. The adapter
+   forwards `Text` as `{ data: string }` to `onmessage`, decodes `Binary`,
+   drops `Ping`/`Pong`, and turns `Close` into an `onclose` dispatch so the
+   UI's existing reconnect-with-backoff logic keeps working.
+
+`readyState` and the `CONNECTING`/`OPEN`/`CLOSING`/`CLOSED` constants are
+mirrored so anything reading them behaves.
+
+### Bridge
+
+The shim sets:
+
+```js
+window.metacubexd = {
+  isDesktop: true,
+  platform, // from Tauri's OS plugin
+  window: { minimize, toggleMaximize, close, isMaximized, onMaximizeChange },
+}
+```
+
+mapped onto Tauri's window API, against a `decorations: false` window. This
+lights up the `TitleBar` component that `packages/ui` already ships.
+
+What the bridge **omits** is as important as what it provides:
+
+- no `control` → `resolveControlConfig()` falls back to
+  `<origin>/api/control`, the `/info` probe fails, `useControlInfo()` reports
+  no features, and every agent-only surface (kernel lifecycle, profiles,
+  subscriptions, system proxy, TUN, WebDAV backup, config editor) hides itself.
+  This is hosted-panel mode, reached by omission rather than by deleting UI.
+- no `endpoint` → `desktop-endpoint.client.ts` returns early and does not seed a
+  managed local endpoint. The user adds their own backends.
+- no `settings` / `hotkeys` → the Desktop section of the control page stays
+  hidden (`showDesktop` requires the settings bridge).
+
+Verified: every consumer of these fields guards on presence, so omission is
+safe rather than merely untested.
+
+`tauri-plugin-window-state` restores window size and position across launches.
+
+## Capabilities
+
+`src-tauri/capabilities/default.json` grants `http:default` and
+`websocket:default`, scoped to `http://*`, `https://*`, `ws://*`, `wss://*`.
+
+The scope is necessarily open: the user types arbitrary backend URLs into the
+app, so no narrower allowlist can be known ahead of time. This is the same trust
+posture as a browser pointed at the same addresses, minus the CORS theater.
+
+Requests originate from reqwest, which does not apply the system proxy by
+default. That is the behavior we want: reaching a LAN core must not loop back
+through the proxy the core is serving.
+
+## Commands
+
+```bash
+pnpm dev:tauri      # build shim -> nuxt dev + tauri dev (HMR in-window)
+pnpm build:tauri    # build shim -> generate:desktop -> tauri build
+```
+
+## Testing
+
+**Unit (`apps/tauri`, vitest).** The shim is plain TypeScript with the Tauri
+plugin modules mocked, so it tests without a webview:
+
+- the origin predicate: relative, same-origin absolute, cross-origin,
+  `blob:`/`data:`, malformed URLs;
+- `fetch` dispatch: native vs plugin per the predicate, headers and method
+  passthrough;
+- the WebSocket adapter: buffering before open, `readyState` transitions,
+  envelope unwrapping for each message type, `Close` → `onclose`, `close()`
+  before connect resolves;
+- the bridge: shape, and that `control`/`endpoint`/`settings` are absent.
+
+**Manual smoke** against a real Mihomo:
+
+- window controls (minimize/maximize/close) and size/position restore;
+- add a backend over `http://` on the LAN — proxies, rules, connections load;
+- traffic and logs WebSockets stream and reconnect after a backend restart;
+- latency test returns numbers;
+- no kernel/profile/agent UI is present anywhere.
+
+`packages/ui`'s own test suites are untouched and must still pass.
+
+## Upstream merges
+
+Add the remote and document the routine in the README:
+
+```bash
+git remote add upstream https://github.com/MetaCubeX/metacubexd.git
+git fetch upstream && git merge upstream/main
+```
+
+Expected conflict surface: `pnpm-workspace.yaml` and the two root scripts.
+Everything else this fork adds is a new path.
+
+If upstream ever renames a bridge field or changes the WebSocket message
+contract, the shim's unit tests are what catch it.
+
+## Deferred
+
+Explicitly out of scope for this plan, to be revisited once the basic app is
+confirmed working:
+
+- GitHub Actions release workflow;
+- Windows and macOS bundle targets;
+- tray icon / minimize to tray;
+- launch at login.
+
+## Risks
+
+| Risk                                                                   | Mitigation                                                                                                                                      |
+| ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `initialization_script` ordering vs. page scripts                      | Guaranteed document-start by the webview's user-script mechanism; the smoke test confirms it, and the shim is idempotent if re-run.             |
+| Plugin WebSocket envelope differs from the documented shape            | Adapter normalizes centrally in one function with unit tests; only one place to fix.                                                            |
+| Upstream adds a transport the shim does not cover (e.g. `EventSource`) | Only the Control API uses `EventSource`, which this build never reaches. If upstream adds another, the same global-patch pattern extends to it. |
+| An upstream change makes `packages/ui` require a Control Agent         | Would surface immediately in the smoke test; the fork can then pin or patch deliberately.                                                       |
