@@ -938,16 +938,27 @@ describe('createBridge', () => {
   it('declares itself as the desktop shell with the given platform', () => {
     const { win } = fakeWindow()
 
-    const bridge = createBridge('linux', () => win)
+    const bridge = createBridge('linux', true, () => win)
 
     expect(bridge.isDesktop).toBe(true)
     expect(bridge.platform).toBe('linux')
   })
 
+  it('reports a mobile shell as not-desktop, so no title bar is rendered', () => {
+    // Rust passes cfg!(desktop) through; on Android that is false and
+    // useDesktop() must not render a desktop title bar on a phone.
+    const { win } = fakeWindow()
+
+    const bridge = createBridge('android', false, () => win)
+
+    expect(bridge.isDesktop).toBe(false)
+    expect(bridge.platform).toBe('android')
+  })
+
   it('omits control and endpoint so the UI stays in hosted-panel mode', () => {
     const { win } = fakeWindow()
 
-    const bridge = createBridge('linux', () => win)
+    const bridge = createBridge('linux', true, () => win)
 
     expect('control' in bridge).toBe(false)
     expect('endpoint' in bridge).toBe(false)
@@ -958,7 +969,7 @@ describe('createBridge', () => {
   it('exposes every window control useDesktop() expects', () => {
     const { win } = fakeWindow()
 
-    const bridge = createBridge('linux', () => win)
+    const bridge = createBridge('linux', true, () => win)
 
     expect(Object.keys(bridge.window).sort()).toEqual([
       'close',
@@ -971,7 +982,7 @@ describe('createBridge', () => {
 
   it('forwards the controls to the Tauri window', async () => {
     const { win } = fakeWindow()
-    const bridge = createBridge('linux', () => win)
+    const bridge = createBridge('linux', true, () => win)
 
     bridge.window.minimize()
     bridge.window.toggleMaximize()
@@ -985,7 +996,7 @@ describe('createBridge', () => {
 
   it('reports maximize changes off resize events', async () => {
     const { win, resize } = fakeWindow()
-    const bridge = createBridge('linux', () => win)
+    const bridge = createBridge('linux', true, () => win)
     const seen: boolean[] = []
 
     bridge.window.onMaximizeChange((maximized) => seen.push(maximized))
@@ -998,7 +1009,7 @@ describe('createBridge', () => {
 
   it('stops reporting once unsubscribed', async () => {
     const { win, unlisten, resize } = fakeWindow()
-    const bridge = createBridge('linux', () => win)
+    const bridge = createBridge('linux', true, () => win)
     const seen: boolean[] = []
 
     const off = bridge.window.onMaximizeChange((m) => seen.push(m))
@@ -1039,7 +1050,7 @@ export interface TauriWindow {
 export type WindowSource = () => TauriWindow
 
 export interface Bridge {
-  isDesktop: true
+  isDesktop: boolean
   platform: string
   window: {
     minimize: () => void
@@ -1061,15 +1072,20 @@ export interface Bridge {
  * no managed local backend is seeded. No `settings`/`hotkeys` keys means the
  * Desktop section of the control page stays hidden.
  *
+ * `isDesktop` comes from Rust's `cfg!(desktop)` rather than being hardcoded.
+ * On Android it is false, which is what keeps useDesktop() from rendering a
+ * desktop title bar and its window controls on a phone.
+ *
  * The window is resolved lazily on each call so nothing touches
  * window.__TAURI_INTERNALS__ at install time.
  */
 export function createBridge(
   platform: string,
+  isDesktop: boolean,
   windowSource: WindowSource = getCurrentWindow,
 ): Bridge {
   return {
-    isDesktop: true,
+    isDesktop,
     platform,
     window: {
       minimize: () => void windowSource().minimize(),
@@ -1113,7 +1129,7 @@ export function createBridge(
 
 Run: `pnpm --filter @metacubexd/tauri exec vitest run shim/__tests__/bridge.spec.ts`
 
-Expected: PASS — 6 passed.
+Expected: PASS — 7 passed.
 
 - [ ] **Step 5: Commit**
 
@@ -1325,21 +1341,23 @@ vi.mock('@tauri-apps/plugin-websocket', () => ({
 }))
 vi.mock('@tauri-apps/api/window', () => ({ getCurrentWindow: vi.fn() }))
 
-function target(platform?: string) {
+function target(platform?: string, isDesktop?: boolean) {
   return {
     fetch: vi.fn(),
     WebSocket: class Original {},
     document,
     __MCXD_PLATFORM__: platform,
+    __MCXD_IS_DESKTOP__: isDesktop,
   } as unknown as typeof globalThis & {
     __MCXD_PLATFORM__?: string
-    metacubexd?: { platform: string }
+    __MCXD_IS_DESKTOP__?: boolean
+    metacubexd?: { platform: string; isDesktop: boolean }
   }
 }
 
 describe('install', () => {
   it('replaces fetch and WebSocket and publishes the bridge', () => {
-    const global = target('linux')
+    const global = target('linux', true)
     const originalFetch = global.fetch
     const OriginalWebSocket = global.WebSocket
 
@@ -1348,10 +1366,19 @@ describe('install', () => {
     expect(global.fetch).not.toBe(originalFetch)
     expect(global.WebSocket).not.toBe(OriginalWebSocket)
     expect(global.metacubexd?.platform).toBe('linux')
+    expect(global.metacubexd?.isDesktop).toBe(true)
+  })
+
+  it('passes a mobile shell flag through to the bridge', () => {
+    const global = target('android', false)
+
+    install(global)
+
+    expect(global.metacubexd?.isDesktop).toBe(false)
   })
 
   it('is idempotent, so a re-run cannot double-wrap fetch', () => {
-    const global = target('linux')
+    const global = target('linux', true)
 
     install(global)
     const patched = global.fetch
@@ -1360,12 +1387,13 @@ describe('install', () => {
     expect(global.fetch).toBe(patched)
   })
 
-  it('falls back to a neutral platform when Rust injected none', () => {
-    const global = target(undefined)
+  it('falls back to linux/desktop when Rust injected no prelude', () => {
+    const global = target(undefined, undefined)
 
     install(global)
 
     expect(global.metacubexd?.platform).toBe('linux')
+    expect(global.metacubexd?.isDesktop).toBe(true)
   })
 })
 ```
@@ -1391,8 +1419,9 @@ interface ShimTarget {
   WebSocket: unknown
   document: Document
   metacubexd?: unknown
-  /** Injected by src-tauri/src/shim.rs ahead of this bundle. */
+  /** Both injected by src-tauri/src/shim.rs ahead of this bundle. */
   __MCXD_PLATFORM__?: string
+  __MCXD_IS_DESKTOP__?: boolean
   __MCXD_SHIM_INSTALLED__?: boolean
 }
 
@@ -1412,9 +1441,13 @@ export function install(target: ShimTarget): void {
   target.WebSocket = createWebSocketClass()
 
   // Electron reports linux/darwin/win32; shim.rs maps Rust's OS names onto
-  // those. Default to linux if the prelude is somehow absent — only the darwin
-  // branch changes UI behavior, so this errs toward the common case.
-  target.metacubexd = createBridge(target.__MCXD_PLATFORM__ ?? 'linux')
+  // those and passes android/ios through. isDesktop comes from Rust's
+  // cfg!(desktop). Defaults cover a missing prelude: linux and desktop are the
+  // common case, and only the darwin branch changes UI behavior.
+  target.metacubexd = createBridge(
+    target.__MCXD_PLATFORM__ ?? 'linux',
+    target.__MCXD_IS_DESKTOP__ ?? true,
+  )
 
   installDragRegions(target.document)
 }
@@ -1483,7 +1516,7 @@ Expected: `ok, bytes: <a number over 10000>`
 
 Run: `pnpm --filter @metacubexd/tauri test`
 
-Expected: PASS — 6 spec files, 37 tests (origin 7, fetch 5, websocket 11, bridge 6, drag 5, index 3).
+Expected: PASS — 6 spec files, 39 tests (origin 7, fetch 5, websocket 11, bridge 7, drag 5, index 4).
 
 Run: `pnpm --filter @metacubexd/tauri typecheck`
 
@@ -1602,10 +1635,20 @@ fn platform() -> &'static str {
 }
 
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
-    // js_init_script wraps its payload in an IIFE, so both halves assign to
-    // `window`/`globalThis` explicitly. {:?} on a &str emits a correctly
-    // escaped JS string literal.
-    let script = format!("window.__MCXD_PLATFORM__ = {:?};\n{}", platform(), SHIM);
+    // js_init_script wraps its payload in an IIFE, so the prelude assigns to
+    // `window` explicitly. {:?} on a &str emits a correctly escaped JS string
+    // literal.
+    //
+    // `cfg!(desktop)` is the alias tauri-build defines. Handing it to the
+    // webview is what stops the dashboard drawing a desktop title bar and
+    // window controls on Android, without the JS side guessing from a platform
+    // string.
+    let script = format!(
+        "window.__MCXD_PLATFORM__ = {:?};\nwindow.__MCXD_IS_DESKTOP__ = {};\n{}",
+        platform(),
+        cfg!(desktop),
+        SHIM
+    );
 
     Builder::new("mcxd-shim").js_init_script(script).build()
 }
@@ -1878,10 +1921,9 @@ Nothing under `src-tauri/` should be deleted for being unused on Linux. The
 exist for those milestones. Desktop-only additions belong behind
 `#[cfg(desktop)]`.
 
-One known piece of UI work waits on Android: `useDesktop()` keys the custom
-title bar off `isDesktop`, which the bridge currently sets unconditionally. A
-phone should get neither the title bar nor its window controls, so the bridge
-will need to report a platform-appropriate shape then.
+The title bar is already handled: the bridge's `isDesktop` comes from Rust's
+`cfg!(desktop)`, so an Android build reports false and `useDesktop()` renders
+neither the desktop title bar nor its window controls.
 
 Also not done: tray icon, launch-at-login (both desktop-only).
 ````
@@ -1917,6 +1959,6 @@ git commit -m "docs: document the Tauri fork and the upstream merge routine"
 - `pnpm build:tauri` produces a `.deb`.
 - The Task 9 smoke checklist passes against a real Mihomo over plain `http://`.
 - `git status --short packages/` is empty.
-- `pnpm --filter @metacubexd/tauri test` passes: 6 spec files, 37 tests.
+- `pnpm --filter @metacubexd/tauri test` passes: 6 spec files, 39 tests.
 - Task 8 Step 10 passes: the scaffold is still mobile-capable, so the Android
   milestone starts from `tauri android init` rather than from a restructure.

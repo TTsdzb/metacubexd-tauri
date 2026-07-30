@@ -215,14 +215,19 @@ The shim sets:
 
 ```js
 window.metacubexd = {
-  isDesktop: true,
-  platform, // from Tauri's OS plugin
+  isDesktop, // Rust's cfg!(desktop)
+  platform, // Rust's std::env::consts::OS, mapped to Electron's names
   window: { minimize, toggleMaximize, close, isMaximized, onMaximizeChange },
 }
 ```
 
 mapped onto Tauri's window API, against a `decorations: false` window. This
 lights up the `TitleBar` component that `packages/ui` already ships.
+
+`isDesktop` and `platform` are injected by `shim.rs` as a prelude ahead of the
+bundle, so the JS side never probes for them. Taking `isDesktop` from
+`cfg!(desktop)` rather than hardcoding `true` is what keeps the same shim
+correct on Android, where the desktop title bar must not render.
 
 What the bridge **omits** is as important as what it provides:
 
@@ -314,11 +319,12 @@ confirmed working, roughly in this order:
    the Android webview too;
 4. tray icon / minimize to tray, launch at login (desktop only).
 
-Android will need UI work beyond the shell: `useDesktop()` currently keys the
-custom title bar off `isDesktop`, which the bridge sets unconditionally. On a
-phone the title bar and its window controls make no sense, so the bridge will
-need to report the platform-appropriate shape. That is a decision for the
-Android milestone, not a change to make speculatively now.
+Android's one foreseeable UI hazard is already handled rather than deferred:
+`useDesktop()` keys the custom title bar off `isDesktop`, and the bridge takes
+that value from Rust's `cfg!(desktop)` alias instead of hardcoding it. An
+Android build reports false, so the phone gets neither the desktop title bar nor
+its window controls, and the JS side never has to infer this from a platform
+string.
 
 ## Risks
 
