@@ -1,6 +1,6 @@
 packages:
   - 'packages/*'
-  - 'apps/*'
+  - 'apps/tauri'
 
 # Single default catalog: every package references deps as "catalog:".
 # Versions are transcribed verbatim from the pre-migration root package.json
@@ -24,6 +24,10 @@ catalog:
   '@tailwindcss/vite': ^4.3.3
   '@tanstack/vue-query': ^5.101.4
   '@tanstack/vue-virtual': ^3.13.33
+  '@tauri-apps/api': ^2.11.1
+  '@tauri-apps/cli': ^2.11.4
+  '@tauri-apps/plugin-http': ^2.5.9
+  '@tauri-apps/plugin-websocket': ^2.4.2
   '@types/byte-size': ^8.1.2
   '@types/d3': ^7.4.3
   '@types/markdown-it': ^14.1.2
@@ -42,6 +46,7 @@ catalog:
   electron: ^43.2.0
   electron-builder: ^26.0.0
   electron-vite: ^5.0.0
+  esbuild: ^0.28.1
   eslint: ^10.7.0
   eslint-plugin-format: ^2.0.1
   # NEW-SUBSYSTEM deps (consumed by the future agent/server/desktop packages
