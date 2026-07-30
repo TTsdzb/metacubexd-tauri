@@ -1,0 +1,1819 @@
+# Tauri Dashboard Shell Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Ship the metacubexd dashboard as a native Tauri desktop app that controls a user-managed Mihomo kernel over LAN or loopback, free of CORS and mixed-content restrictions, with `packages/ui` left byte-for-byte upstream.
+
+**Architecture:** A new `apps/tauri` workspace holds a Rust Tauri v2 shell plus a TypeScript "shim" bundled by esbuild into a single IIFE. Tauri injects that IIFE as a webview `initialization_script`, so it runs at document-start before any page script and replaces `globalThis.fetch` and `globalThis.WebSocket` with Tauri-plugin-backed implementations for cross-origin traffic only. The same shim publishes a `window.metacubexd` bridge that lights up the dashboard's existing custom title bar. The frontend is upstream's own `nuxt generate` output, consumed in place.
+
+**Tech Stack:** Tauri 2.11, Rust 2021, `tauri-plugin-http` 2.5, `tauri-plugin-websocket` 2.4, `tauri-plugin-window-state` 2.4, TypeScript, esbuild 0.28, Vitest 4 (jsdom), pnpm 10 workspace with a single catalog.
+
+**Spec:** `docs/superpowers/specs/2026-07-30-tauri-dashboard-design.md`
+
+---
+
+## Deviations from the spec (deliberate, already reasoned)
+
+Three, all discovered while pinning down real APIs:
+
+1. **A drag-region shim is required.** `packages/ui/components/TitleBar.vue` makes itself draggable with `style="-webkit-app-region: drag"`, an Electron-only CSS property that wry/WebKitGTK ignores. Without a shim the frameless window cannot be moved. Task 6 adds `shim/drag.ts`, which translates those inline styles into Tauri's `startDragging()`. This is required for the approved "custom title bar" outcome, not new scope.
+2. **`shim/index.ts` splits into `index.ts` + `entry.ts`.** `index.ts` exports `install()`; `entry.ts` calls it. Tests import `index.ts` without triggering a global patch as an import side effect.
+3. **Fork docs go in a new `FORK.md`, not `README.md`.** The spec said README; README is a 27KB upstream-owned file, and editing it manufactures exactly the merge conflicts this design exists to avoid. A new file has none.
+
+Also: `src-tauri` uses `main.rs` only — no `lib.rs`. That split exists in the Tauri template to support mobile targets, which this desktop-only app does not have.
+
+---
+
+## File Structure
+
+**Created:**
+
+| Path                                             | Responsibility                                            |
+| ------------------------------------------------ | --------------------------------------------------------- |
+| `apps/tauri/package.json`                        | Workspace manifest; dev/build/test scripts                |
+| `apps/tauri/tsconfig.json`                       | Extends the root base config, adds DOM libs               |
+| `apps/tauri/vitest.config.ts`                    | jsdom environment for the shim specs                      |
+| `apps/tauri/build-shim.mjs`                      | esbuild: `shim/entry.ts` → `src-tauri/shim.js` (IIFE)     |
+| `apps/tauri/shim/origin.ts`                      | The one routing predicate: native transport or not        |
+| `apps/tauri/shim/fetch.ts`                       | `fetch` replacement dispatching on that predicate         |
+| `apps/tauri/shim/websocket.ts`                   | `WebSocket`-compatible class over the Tauri plugin        |
+| `apps/tauri/shim/bridge.ts`                      | `window.metacubexd` window-control bridge                 |
+| `apps/tauri/shim/drag.ts`                        | Translates `-webkit-app-region` into `startDragging()`    |
+| `apps/tauri/shim/index.ts`                       | `install()` — wires all of the above onto a target global |
+| `apps/tauri/shim/entry.ts`                       | Bundle entry; calls `install()`                           |
+| `apps/tauri/shim/__tests__/*.spec.ts`            | Unit specs, plugin modules mocked                         |
+| `apps/tauri/src-tauri/Cargo.toml`                | Rust manifest                                             |
+| `apps/tauri/src-tauri/build.rs`                  | `tauri_build::build()`                                    |
+| `apps/tauri/src-tauri/tauri.conf.json`           | Window, bundle, dev/build command wiring                  |
+| `apps/tauri/src-tauri/capabilities/default.json` | HTTP/WebSocket/window permissions                         |
+| `apps/tauri/src-tauri/src/main.rs`               | Plugin registration, window + script injection            |
+| `FORK.md`                                        | Upstream-merge routine and what this fork changes         |
+
+**Modified (the entire upstream-owned surface — three files):**
+
+- `pnpm-workspace.yaml` — workspace globs, catalog entries
+- `package.json` (root) — scripts
+- `.gitignore` — Tauri build artifacts
+
+---
+
+## Task 1: Workspace scaffolding
+
+**Files:**
+
+- Modify: `pnpm-workspace.yaml:1-7` (globs) and the `catalog:` block
+- Modify: `package.json` (root, scripts)
+- Modify: `.gitignore`
+- Create: `apps/tauri/package.json`
+- Create: `apps/tauri/tsconfig.json`
+- Create: `apps/tauri/vitest.config.ts`
+
+- [ ] **Step 1: Narrow the workspace globs**
+
+Replace lines 1-7 of `pnpm-workspace.yaml` — the `packages:` block — so `apps/desktop` and `apps/server` stop being workspace members. Their files stay on disk untouched.
+
+```yaml
+packages:
+  - 'packages/*'
+  - 'apps/tauri'
+```
+
+Keep every comment that follows the block exactly as it is.
+
+- [ ] **Step 2: Add catalog entries**
+
+The catalog is a single alphabetically-sorted block (`pnpm-workspace.yaml:8-96`). Add the `@tauri-apps/*` keys among the other `@`-scoped entries, and `esbuild` among the plain ones:
+
+```yaml
+'@tauri-apps/api': ^2.11.1
+'@tauri-apps/cli': ^2.11.4
+'@tauri-apps/plugin-http': ^2.5.9
+'@tauri-apps/plugin-websocket': ^2.4.2
+```
+
+```yaml
+esbuild: ^0.28.1
+```
+
+Do **not** touch the `overrides:` block at line 109. It already pins `esbuild@0.28` to `0.28.1`, which is exactly what `^0.28.1` resolves to.
+
+- [ ] **Step 3: Rewrite the root scripts**
+
+In the root `package.json`, the `scripts` object becomes exactly this. Four scripts whose `--filter` targets no longer exist are deleted; `build` is repointed at the Tauri app.
+
+```json
+  "scripts": {
+    "dev": "pnpm dev:ui",
+    "dev:ui": "pnpm --filter @metacubexd/ui dev",
+    "dev:tauri": "pnpm --filter @metacubexd/tauri dev",
+    "build": "pnpm build:tauri",
+    "build:ui": "pnpm --filter @metacubexd/ui generate",
+    "build:tauri": "pnpm --filter @metacubexd/tauri build",
+    "generate": "pnpm build:ui && rm -rf .output && cp -r packages/ui/.output .output",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "pnpm -r lint",
+    "prepare:husky": "husky",
+    "prepare": "husky"
+  },
+```
+
+- [ ] **Step 4: Ignore the Tauri build artifacts**
+
+Append to `.gitignore`:
+
+```gitignore
+# Tauri
+apps/tauri/src-tauri/target
+apps/tauri/src-tauri/gen/schemas
+# Generated by apps/tauri/build-shim.mjs on every dev/build run.
+apps/tauri/src-tauri/shim.js
+```
+
+- [ ] **Step 5: Create the workspace manifest**
+
+Create `apps/tauri/package.json`:
+
+```json
+{
+  "name": "@metacubexd/tauri",
+  "version": "1.270.6",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build-shim.mjs && tauri build",
+    "build:shim": "node build-shim.mjs",
+    "dev": "node build-shim.mjs && tauri dev",
+    "tauri": "tauri",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "catalog:",
+    "@tauri-apps/plugin-http": "catalog:",
+    "@tauri-apps/plugin-websocket": "catalog:"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "catalog:",
+    "@types/node": "catalog:",
+    "esbuild": "catalog:",
+    "jsdom": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}
+```
+
+There is no `@tauri-apps/plugin-window-state` JS dependency: that plugin is driven entirely from Rust.
+
+- [ ] **Step 6: Create the TypeScript config**
+
+Create `apps/tauri/tsconfig.json`. The root base config sets `lib: ["ES2023"]` with no DOM, which the shim needs, and enables `noUnusedLocals`/`noUnusedParameters`/`noUncheckedIndexedAccess` — keep those on and write code that satisfies them.
+
+```json
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "types": ["node"]
+  },
+  "include": ["shim/**/*.ts", "vitest.config.ts"]
+}
+```
+
+- [ ] **Step 7: Create the vitest config**
+
+Create `apps/tauri/vitest.config.ts`. The jsdom URL is pinned so the same-origin specs assert against a known origin rather than a vitest default.
+
+```ts
+import { defineConfig } from 'vitest/config'
+
+export default defineConfig({
+  test: {
+    environment: 'jsdom',
+    environmentOptions: {
+      jsdom: { url: 'http://localhost:3000/' },
+    },
+    include: ['shim/**/*.spec.ts'],
+  },
+})
+```
+
+- [ ] **Step 8: Install and verify the workspace resolves**
+
+Run: `pnpm install`
+
+Expected: install succeeds; the summary no longer mentions `@metacubexd/desktop` or `@metacubexd/server`.
+
+Then confirm the workspace members are exactly the expected set:
+
+Run: `pnpm ls -r --depth -1`
+
+Expected: entries for `metacubexd-monorepo`, `@metacubexd/config-editor`, `@metacubexd/tauri`, and `@metacubexd/ui`, and **no** entry for `@metacubexd/desktop` or `@metacubexd/server`.
+
+- [ ] **Step 9: Commit**
+
+```bash
+git add pnpm-workspace.yaml package.json .gitignore pnpm-lock.yaml apps/tauri
+git commit -m "build(tauri): scaffold the apps/tauri workspace
+
+Narrow the workspace globs so the Electron and Nitro apps stay on disk
+but out of every install and build. Add the Tauri toolchain to the
+catalog and delete the root scripts whose filter targets no longer
+resolve."
+```
+
+---
+
+## Task 2: The routing predicate
+
+The single rule the whole shim turns on: same-origin stays on the webview's own transport; everything else goes native.
+
+**Files:**
+
+- Create: `apps/tauri/shim/origin.ts`
+- Test: `apps/tauri/shim/__tests__/origin.spec.ts`
+
+- [ ] **Step 1: Write the failing test**
+
+Create `apps/tauri/shim/__tests__/origin.spec.ts`. Note the `ws://localhost:3000` case: that is Vite's HMR socket in dev, and it must stay native or hot reload breaks inside the Tauri window.
+
+```ts
+import { describe, expect, it } from 'vitest'
+import { needsNativeTransport } from '../origin'
+
+// jsdom serves these specs from http://localhost:3000/ (vitest.config.ts),
+// standing in for the Nuxt dev server.
+describe('needsNativeTransport', () => {
+  it('keeps relative URLs on the webview transport', () => {
+    expect(needsNativeTransport('proxies')).toBe(false)
+    expect(needsNativeTransport('/config.js')).toBe(false)
+  })
+
+  it('keeps same-origin absolute URLs on the webview transport', () => {
+    expect(needsNativeTransport('http://localhost:3000/api/control/info')).toBe(
+      false,
+    )
+  })
+
+  it("keeps Vite's HMR socket on the webview transport", () => {
+    // URL.origin serializes ws: as "ws://localhost:3000", which never equals
+    // location.origin ("http://localhost:3000"). Comparing hosts, not origins,
+    // is what keeps HMR working.
+    expect(needsNativeTransport('ws://localhost:3000/_nuxt/hmr')).toBe(false)
+  })
+
+  it('routes a cross-origin backend natively', () => {
+    expect(needsNativeTransport('http://192.168.1.5:9090/version')).toBe(true)
+    expect(needsNativeTransport('ws://192.168.1.5:9090/traffic')).toBe(true)
+    expect(needsNativeTransport('wss://example.com/logs')).toBe(true)
+    expect(needsNativeTransport('https://api.github.com/repos/a/b')).toBe(true)
+  })
+
+  it('accepts URL instances', () => {
+    expect(needsNativeTransport(new URL('http://192.168.1.5:9090/'))).toBe(true)
+  })
+
+  it('leaves non-network schemes alone', () => {
+    expect(needsNativeTransport('blob:http://localhost:3000/abc')).toBe(false)
+    expect(needsNativeTransport('data:text/plain,hello')).toBe(false)
+  })
+
+  it('leaves unparseable input to the platform implementation', () => {
+    expect(needsNativeTransport('http://[malformed')).toBe(false)
+  })
+})
+```
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Run: `pnpm --filter @metacubexd/tauri exec vitest run shim/__tests__/origin.spec.ts`
+
+Expected: FAIL — `Failed to resolve import "../origin"`.
+
+- [ ] **Step 3: Write the implementation**
+
+Create `apps/tauri/shim/origin.ts`:
+
+```ts
+// Schemes the Tauri transports can carry. Anything else (blob:, data:,
+// filesystem:) is meaningless to them and stays on the webview.
+const NATIVE_PROTOCOLS = new Set(['http:', 'https:', 'ws:', 'wss:'])
+
+/**
+ * Should this URL travel through the Tauri native transport?
+ *
+ * Same-origin and relative URLs keep the webview's own implementation: that
+ * covers Nuxt's internal requests, config.js, locally served fonts and — in
+ * dev — Vite's HMR socket. Everything else (the user's Mihomo backend, the
+ * GitHub release check) goes native, where CORS and mixed-content rules do not
+ * apply.
+ */
+export function needsNativeTransport(url: string | URL): boolean {
+  let parsed: URL
+  try {
+    parsed = new URL(String(url), globalThis.location?.href)
+  } catch {
+    // Unparseable: hand it to the platform implementation and let it raise its
+    // own, more familiar error.
+    return false
+  }
+
+  if (!NATIVE_PROTOCOLS.has(parsed.protocol)) return false
+
+  // ws:/wss: serialize their origin as "ws://host:port", which can never equal
+  // an http: location.origin. Compare hosts so a dev-server socket is
+  // recognized as same-origin.
+  if (parsed.protocol === 'ws:' || parsed.protocol === 'wss:') {
+    return parsed.host !== globalThis.location?.host
+  }
+
+  return parsed.origin !== globalThis.location?.origin
+}
+```
+
+- [ ] **Step 4: Run the test to verify it passes**
+
+Run: `pnpm --filter @metacubexd/tauri exec vitest run shim/__tests__/origin.spec.ts`
+
+Expected: PASS — 7 passed.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add apps/tauri/shim/origin.ts apps/tauri/shim/__tests__/origin.spec.ts
+git commit -m "feat(tauri): add the native-transport routing predicate"
+```
+
+---
+
+## Task 3: The fetch shim
+
+**Files:**
+
+- Create: `apps/tauri/shim/fetch.ts`
+- Test: `apps/tauri/shim/__tests__/fetch.spec.ts`
+
+- [ ] **Step 1: Write the failing test**
+
+Create `apps/tauri/shim/__tests__/fetch.spec.ts`. `ky` calls `fetch` with a `Request` instance, so that case is tested explicitly.
+
+```ts
+import { describe, expect, it, vi } from 'vitest'
+import { createFetch } from '../fetch'
+
+// The real module reaches for window.__TAURI_INTERNALS__, which does not exist
+// under jsdom. The factory takes both transports as arguments, so the mock only
+// has to satisfy the import.
+vi.mock('@tauri-apps/plugin-http', () => ({ fetch: vi.fn() }))
+
+function transports() {
+  const webview = vi.fn(async () => new Response('webview'))
+  const native = vi.fn(async () => new Response('native'))
+  return { webview, native, patched: createFetch(webview, native) }
+}
+
+describe('createFetch', () => {
+  it('sends same-origin requests to the webview transport', async () => {
+    const { webview, native, patched } = transports()
+
+    await patched('/api/control/info')
+
+    expect(webview).toHaveBeenCalledTimes(1)
+    expect(native).not.toHaveBeenCalled()
+  })
+
+  it('sends cross-origin requests to the native transport', async () => {
+    const { webview, native, patched } = transports()
+
+    await patched('http://192.168.1.5:9090/version')
+
+    expect(native).toHaveBeenCalledTimes(1)
+    expect(webview).not.toHaveBeenCalled()
+  })
+
+  it('routes a Request instance by its url', async () => {
+    const { webview, native, patched } = transports()
+    const request = new Request('http://192.168.1.5:9090/proxies')
+
+    await patched(request)
+
+    expect(native).toHaveBeenCalledTimes(1)
+    expect(native.mock.calls[0]?.[0]).toBe(request)
+    expect(webview).not.toHaveBeenCalled()
+  })
+
+  it('forwards input and init untouched', async () => {
+    const { native, patched } = transports()
+    const init = { method: 'PUT', headers: { authorization: 'Bearer s3cret' } }
+
+    await patched('https://api.github.com/repos/a/b', init)
+
+    expect(native).toHaveBeenCalledWith(
+      'https://api.github.com/repos/a/b',
+      init,
+    )
+  })
+
+  it('returns whatever the chosen transport returns', async () => {
+    const { patched } = transports()
+
+    const response = await patched('http://192.168.1.5:9090/version')
+
+    expect(await response.text()).toBe('native')
+  })
+})
+```
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Run: `pnpm --filter @metacubexd/tauri exec vitest run shim/__tests__/fetch.spec.ts`
+
+Expected: FAIL — `Failed to resolve import "../fetch"`.
+
+- [ ] **Step 3: Write the implementation**
+
+Create `apps/tauri/shim/fetch.ts`:
+
+```ts
+import { fetch as tauriFetch } from '@tauri-apps/plugin-http'
+import { needsNativeTransport } from './origin'
+
+export type FetchFn = typeof globalThis.fetch
+
+/**
+ * Build the replacement for `globalThis.fetch`.
+ *
+ * Cross-origin requests are performed by Rust's reqwest, so there is no CORS
+ * preflight and no mixed-content block when the dashboard talks to a plain-http
+ * core on the LAN. Everything same-origin keeps the webview implementation.
+ *
+ * `@tauri-apps/plugin-http`'s fetch accepts the same inputs as the platform
+ * one — including the `Request` instances ky hands it — merges the request's
+ * headers, and honors `init.signal`, so call sites need no adjustment.
+ */
+export function createFetch(
+  webviewFetch: FetchFn,
+  nativeFetch: FetchFn = tauriFetch as FetchFn,
+): FetchFn {
+  return (input, init) => {
+    const url = input instanceof Request ? input.url : (input as string | URL)
+
+    return needsNativeTransport(url)
+      ? nativeFetch(input, init)
+      : webviewFetch(input, init)
+  }
+}
+```
+
+- [ ] **Step 4: Run the test to verify it passes**
+
+Run: `pnpm --filter @metacubexd/tauri exec vitest run shim/__tests__/fetch.spec.ts`
+
+Expected: PASS — 5 passed.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add apps/tauri/shim/fetch.ts apps/tauri/shim/__tests__/fetch.spec.ts
+git commit -m "feat(tauri): route cross-origin fetch through the http plugin"
+```
+
+---
+
+## Task 4: The WebSocket adapter
+
+The trickiest piece. `new WebSocket(url)` is synchronous and the plugin's `connect()` is not, so the adapter opens in `CONNECTING`, buffers, and dispatches to handlers that call sites assign _after_ construction — which is exactly what `packages/ui/composables/useWebSocket.ts` does.
+
+**Files:**
+
+- Create: `apps/tauri/shim/websocket.ts`
+- Test: `apps/tauri/shim/__tests__/websocket.spec.ts`
+
+- [ ] **Step 1: Write the failing test**
+
+Create `apps/tauri/shim/__tests__/websocket.spec.ts`:
+
+```ts
+import type { Message, PluginSocket } from '../websocket'
+import { describe, expect, it, vi } from 'vitest'
+import { createWebSocketClass } from '../websocket'
+
+vi.mock('@tauri-apps/plugin-websocket', () => ({
+  default: { connect: vi.fn() },
+}))
+
+// A stand-in for the plugin's socket. `emit` plays the role of the Rust side
+// pushing a frame up the channel.
+function fakeSocket() {
+  const listeners: ((msg: Message) => void)[] = []
+  const socket: PluginSocket = {
+    addListener: (cb) => {
+      listeners.push(cb)
+      return () => {}
+    },
+    send: vi.fn(async () => {}),
+    disconnect: vi.fn(async () => {}),
+  }
+  return {
+    socket,
+    emit: (msg: Message) => listeners.forEach((cb) => cb(msg)),
+    sent: socket.send as ReturnType<typeof vi.fn>,
+    disconnected: socket.disconnect as ReturnType<typeof vi.fn>,
+  }
+}
+
+// Let the constructor's pending connect() promise settle.
+const settle = () => new Promise((resolve) => setTimeout(resolve, 0))
+
+describe('createWebSocketClass', () => {
+  it('starts CONNECTING and reaches OPEN once connected', async () => {
+    const { socket } = fakeSocket()
+    const Ctor = createWebSocketClass(async () => socket)
+
+    const ws = new Ctor('ws://192.168.1.5:9090/traffic')
+    expect(ws.readyState).toBe(0)
+    expect(ws.url).toBe('ws://192.168.1.5:9090/traffic')
+
+    await settle()
+    expect(ws.readyState).toBe(1)
+  })
+
+  it('connects to the url it was constructed with', async () => {
+    const { socket } = fakeSocket()
+    const connect = vi.fn(async () => socket)
+    const Ctor = createWebSocketClass(connect)
+
+    new Ctor('ws://192.168.1.5:9090/logs?token=abc')
+    await settle()
+
+    expect(connect).toHaveBeenCalledWith('ws://192.168.1.5:9090/logs?token=abc')
+  })
+
+  it('delivers Text frames to an onmessage assigned after construction', async () => {
+    const { socket, emit } = fakeSocket()
+    const Ctor = createWebSocketClass(async () => socket)
+    const ws = new Ctor('ws://host/traffic')
+    const received: unknown[] = []
+    ws.onmessage = (event) => received.push(event.data)
+
+    await settle()
+    emit({ type: 'Text', data: '{"up":1,"down":2}' })
+
+    expect(received).toEqual(['{"up":1,"down":2}'])
+  })
+
+  it('decodes Binary frames to text, because the UI JSON.parses event.data', async () => {
+    const { socket, emit } = fakeSocket()
+    const Ctor = createWebSocketClass(async () => socket)
+    const ws = new Ctor('ws://host/traffic')
+    const received: unknown[] = []
+    ws.onmessage = (event) => received.push(event.data)
+
+    await settle()
+    emit({ type: 'Binary', data: [...new TextEncoder().encode('{"up":3}')] })
+
+    expect(received).toEqual(['{"up":3}'])
+  })
+
+  it('ignores Ping and Pong frames', async () => {
+    const { socket, emit } = fakeSocket()
+    const Ctor = createWebSocketClass(async () => socket)
+    const ws = new Ctor('ws://host/traffic')
+    const onmessage = vi.fn()
+    ws.onmessage = onmessage
+
+    await settle()
+    emit({ type: 'Ping', data: [] })
+    emit({ type: 'Pong', data: [] })
+
+    expect(onmessage).not.toHaveBeenCalled()
+  })
+
+  it('turns a Close frame into onclose, so the UI reconnect logic fires', async () => {
+    const { socket, emit } = fakeSocket()
+    const Ctor = createWebSocketClass(async () => socket)
+    const ws = new Ctor('ws://host/traffic')
+    const onclose = vi.fn()
+    ws.onclose = onclose
+
+    await settle()
+    emit({ type: 'Close', data: { code: 1006, reason: 'kernel restarted' } })
+
+    expect(onclose).toHaveBeenCalledTimes(1)
+    expect(onclose.mock.calls[0]?.[0]).toMatchObject({
+      code: 1006,
+      reason: 'kernel restarted',
+    })
+    expect(ws.readyState).toBe(3)
+  })
+
+  it('reports a failed connect as error then close', async () => {
+    const Ctor = createWebSocketClass(async () => {
+      throw new Error('connection refused')
+    })
+    const ws = new Ctor('ws://host/traffic')
+    const order: string[] = []
+    ws.onerror = () => order.push('error')
+    ws.onclose = () => order.push('close')
+
+    await settle()
+
+    expect(order).toEqual(['error', 'close'])
+    expect(ws.readyState).toBe(3)
+  })
+
+  it('disconnects the socket on close() and fires onclose once', async () => {
+    const { socket, disconnected } = fakeSocket()
+    const Ctor = createWebSocketClass(async () => socket)
+    const ws = new Ctor('ws://host/traffic')
+    const onclose = vi.fn()
+    ws.onclose = onclose
+
+    await settle()
+    ws.close()
+    await settle()
+    ws.close()
+    await settle()
+
+    expect(disconnected).toHaveBeenCalledTimes(1)
+    expect(onclose).toHaveBeenCalledTimes(1)
+    expect(ws.readyState).toBe(3)
+  })
+
+  it('does not deliver frames after close(), matching intentional teardown', async () => {
+    const { socket, emit } = fakeSocket()
+    const Ctor = createWebSocketClass(async () => socket)
+    const ws = new Ctor('ws://host/traffic')
+    await settle()
+    const onmessage = vi.fn()
+    ws.onmessage = onmessage
+
+    ws.close()
+    await settle()
+    emit({ type: 'Text', data: 'late' })
+
+    expect(onmessage).not.toHaveBeenCalled()
+  })
+
+  it('disconnects immediately when close() beats the connect promise', async () => {
+    const { socket, disconnected } = fakeSocket()
+    const Ctor = createWebSocketClass(async () => socket)
+
+    const ws = new Ctor('ws://host/traffic')
+    ws.close()
+    await settle()
+
+    expect(disconnected).toHaveBeenCalledTimes(1)
+    expect(ws.readyState).toBe(3)
+  })
+
+  it('buffers sends issued while CONNECTING and flushes them on open', async () => {
+    const { socket, sent } = fakeSocket()
+    const Ctor = createWebSocketClass(async () => socket)
+
+    const ws = new Ctor('ws://host/traffic')
+    ws.send('early')
+    expect(sent).not.toHaveBeenCalled()
+
+    await settle()
+    expect(sent).toHaveBeenCalledWith('early')
+
+    ws.send('later')
+    expect(sent).toHaveBeenCalledWith('later')
+  })
+})
+```
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Run: `pnpm --filter @metacubexd/tauri exec vitest run shim/__tests__/websocket.spec.ts`
+
+Expected: FAIL — `Failed to resolve import "../websocket"`.
+
+- [ ] **Step 3: Write the implementation**
+
+Create `apps/tauri/shim/websocket.ts`:
+
+```ts
+import PluginWebSocket from '@tauri-apps/plugin-websocket'
+
+/** The frame shape `tauri-plugin-websocket` pushes up its channel. */
+export type Message =
+  | { type: 'Text'; data: string }
+  | { type: 'Binary'; data: number[] }
+  | { type: 'Ping'; data: number[] }
+  | { type: 'Pong'; data: number[] }
+  | { type: 'Close'; data: { code: number; reason: string } | null }
+
+/** The slice of the plugin's socket this adapter drives. */
+export interface PluginSocket {
+  addListener: (cb: (msg: Message) => void) => () => void
+  send: (message: string) => Promise<void>
+  disconnect: () => Promise<void>
+}
+
+export type Connector = (url: string) => Promise<PluginSocket>
+
+const CONNECTING = 0
+const OPEN = 1
+const CLOSING = 2
+const CLOSED = 3
+
+/**
+ * Build a `WebSocket`-compatible class backed by `tauri-plugin-websocket`.
+ *
+ * Scope is deliberate: `packages/ui/composables/useWebSocket.ts` is the only
+ * consumer, and it uses `onmessage`/`onerror`/`onclose`/`close()` and nothing
+ * else. `addEventListener`, subprotocols, `bufferedAmount`, `extensions` and
+ * Blob delivery are not implemented. If upstream ever starts using one, its
+ * absence surfaces as an immediate TypeError rather than silent wrong
+ * behavior.
+ *
+ * The connector is injected so the adapter is testable without a webview.
+ */
+export function createWebSocketClass(
+  connect: Connector = (url) =>
+    PluginWebSocket.connect(url) as unknown as Promise<PluginSocket>,
+) {
+  return class TauriWebSocket {
+    static readonly CONNECTING = CONNECTING
+    static readonly OPEN = OPEN
+    static readonly CLOSING = CLOSING
+    static readonly CLOSED = CLOSED
+
+    readonly CONNECTING = CONNECTING
+    readonly OPEN = OPEN
+    readonly CLOSING = CLOSING
+    readonly CLOSED = CLOSED
+
+    readonly url: string
+    readyState: number = CONNECTING
+
+    onopen: ((event: Event) => void) | null = null
+    onmessage: ((event: MessageEvent) => void) | null = null
+    onerror: ((event: Event) => void) | null = null
+    onclose: ((event: CloseEvent) => void) | null = null
+
+    #socket: PluginSocket | null = null
+    #pending: string[] = []
+    #closing = false
+
+    constructor(url: string | URL, _protocols?: string | string[]) {
+      this.url = String(url)
+      void this.#open()
+    }
+
+    async #open(): Promise<void> {
+      let socket: PluginSocket
+      try {
+        socket = await connect(this.url)
+      } catch (error) {
+        this.onerror?.(new Event('error'))
+        this.#finish(1006, String(error))
+        return
+      }
+
+      // close() was called while the connect promise was in flight: honor it
+      // rather than handing back a live socket nobody will ever close.
+      if (this.#closing || this.readyState === CLOSED) {
+        void socket.disconnect().catch(() => {})
+        this.#finish(1000, '')
+        return
+      }
+
+      this.#socket = socket
+      this.readyState = OPEN
+      socket.addListener((message) => this.#receive(message))
+
+      for (const message of this.#pending.splice(0)) {
+        void socket.send(message).catch(() => {})
+      }
+
+      this.onopen?.(new Event('open'))
+    }
+
+    #receive(message: Message): void {
+      if (this.readyState !== OPEN) return
+
+      switch (message.type) {
+        case 'Text':
+          this.onmessage?.(new MessageEvent('message', { data: message.data }))
+          break
+        case 'Binary':
+          // Mihomo speaks text frames; if a binary one ever arrives, decode it
+          // rather than hand the UI a Blob it would fail to JSON.parse.
+          this.onmessage?.(
+            new MessageEvent('message', {
+              data: new TextDecoder().decode(new Uint8Array(message.data)),
+            }),
+          )
+          break
+        case 'Close':
+          this.#finish(message.data?.code ?? 1005, message.data?.reason ?? '')
+          break
+        case 'Ping':
+        case 'Pong':
+          break
+      }
+    }
+
+    #finish(code: number, reason: string): void {
+      if (this.readyState === CLOSED) return
+      this.readyState = CLOSED
+      this.#socket = null
+      this.#pending = []
+      this.onclose?.(
+        new CloseEvent('close', { code, reason, wasClean: code === 1000 }),
+      )
+    }
+
+    send(data: string): void {
+      if (this.readyState === CLOSING || this.readyState === CLOSED) return
+
+      const message = String(data)
+      const socket = this.#socket
+      if (!socket) {
+        // Still CONNECTING. The platform WebSocket throws here; buffering is
+        // friendlier and matches how callers actually expect it to behave.
+        this.#pending.push(message)
+        return
+      }
+
+      void socket.send(message).catch(() => {})
+    }
+
+    close(code = 1000, reason = ''): void {
+      if (this.readyState === CLOSING || this.readyState === CLOSED) return
+
+      this.#closing = true
+      const socket = this.#socket
+      if (!socket) {
+        // Connect is still in flight; #open() sees #closing and cleans up.
+        this.readyState = CLOSING
+        return
+      }
+
+      this.readyState = CLOSING
+      void socket
+        .disconnect()
+        .catch(() => {})
+        .finally(() => this.#finish(code, reason))
+    }
+  }
+}
+```
+
+- [ ] **Step 4: Run the test to verify it passes**
+
+Run: `pnpm --filter @metacubexd/tauri exec vitest run shim/__tests__/websocket.spec.ts`
+
+Expected: PASS — 11 passed.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add apps/tauri/shim/websocket.ts apps/tauri/shim/__tests__/websocket.spec.ts
+git commit -m "feat(tauri): add a WebSocket adapter over the websocket plugin"
+```
+
+---
+
+## Task 5: The window bridge
+
+**Files:**
+
+- Create: `apps/tauri/shim/bridge.ts`
+- Test: `apps/tauri/shim/__tests__/bridge.spec.ts`
+
+Context for the implementer: `packages/ui/composables/useDesktop.ts` reads `window.metacubexd`, spreads `bridge.window` over a no-op default, and treats `platform === 'darwin'` as macOS. `packages/ui/composables/useControlApi.ts` and `packages/ui/plugins/desktop-endpoint.client.ts` read `bridge.control` and `bridge.endpoint`; **omitting both is what puts the app in hosted-panel mode**, hiding every agent-only feature. That omission is a load-bearing part of the design, so it gets a test.
+
+- [ ] **Step 1: Write the failing test**
+
+Create `apps/tauri/shim/__tests__/bridge.spec.ts`:
+
+```ts
+import type { TauriWindow } from '../bridge'
+import { describe, expect, it, vi } from 'vitest'
+import { createBridge } from '../bridge'
+
+vi.mock('@tauri-apps/api/window', () => ({ getCurrentWindow: vi.fn() }))
+
+function fakeWindow() {
+  let resizeHandler: (() => void) | null = null
+  const unlisten = vi.fn()
+  const win: TauriWindow = {
+    minimize: vi.fn(async () => {}),
+    toggleMaximize: vi.fn(async () => {}),
+    close: vi.fn(async () => {}),
+    isMaximized: vi.fn(async () => true),
+    onResized: vi.fn(async (cb: () => void) => {
+      resizeHandler = cb
+      return unlisten
+    }),
+    startDragging: vi.fn(async () => {}),
+  }
+  return { win, unlisten, resize: () => resizeHandler?.() }
+}
+
+const settle = () => new Promise((resolve) => setTimeout(resolve, 0))
+
+describe('createBridge', () => {
+  it('declares itself as the desktop shell with the given platform', () => {
+    const { win } = fakeWindow()
+
+    const bridge = createBridge('linux', () => win)
+
+    expect(bridge.isDesktop).toBe(true)
+    expect(bridge.platform).toBe('linux')
+  })
+
+  it('omits control and endpoint so the UI stays in hosted-panel mode', () => {
+    const { win } = fakeWindow()
+
+    const bridge = createBridge('linux', () => win)
+
+    expect('control' in bridge).toBe(false)
+    expect('endpoint' in bridge).toBe(false)
+    expect('settings' in bridge).toBe(false)
+    expect('hotkeys' in bridge).toBe(false)
+  })
+
+  it('exposes every window control useDesktop() expects', () => {
+    const { win } = fakeWindow()
+
+    const bridge = createBridge('linux', () => win)
+
+    expect(Object.keys(bridge.window).sort()).toEqual([
+      'close',
+      'isMaximized',
+      'minimize',
+      'onMaximizeChange',
+      'toggleMaximize',
+    ])
+  })
+
+  it('forwards the controls to the Tauri window', async () => {
+    const { win } = fakeWindow()
+    const bridge = createBridge('linux', () => win)
+
+    bridge.window.minimize()
+    bridge.window.toggleMaximize()
+    bridge.window.close()
+
+    expect(win.minimize).toHaveBeenCalledTimes(1)
+    expect(win.toggleMaximize).toHaveBeenCalledTimes(1)
+    expect(win.close).toHaveBeenCalledTimes(1)
+    expect(await bridge.window.isMaximized()).toBe(true)
+  })
+
+  it('reports maximize changes off resize events', async () => {
+    const { win, resize } = fakeWindow()
+    const bridge = createBridge('linux', () => win)
+    const seen: boolean[] = []
+
+    bridge.window.onMaximizeChange((maximized) => seen.push(maximized))
+    await settle()
+    resize()
+    await settle()
+
+    expect(seen).toEqual([true])
+  })
+
+  it('stops reporting once unsubscribed', async () => {
+    const { win, unlisten, resize } = fakeWindow()
+    const bridge = createBridge('linux', () => win)
+    const seen: boolean[] = []
+
+    const off = bridge.window.onMaximizeChange((m) => seen.push(m))
+    await settle()
+    off()
+    resize()
+    await settle()
+
+    expect(seen).toEqual([])
+    expect(unlisten).toHaveBeenCalledTimes(1)
+  })
+})
+```
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Run: `pnpm --filter @metacubexd/tauri exec vitest run shim/__tests__/bridge.spec.ts`
+
+Expected: FAIL — `Failed to resolve import "../bridge"`.
+
+- [ ] **Step 3: Write the implementation**
+
+Create `apps/tauri/shim/bridge.ts`:
+
+```ts
+import { getCurrentWindow } from '@tauri-apps/api/window'
+
+/** The slice of Tauri's window API this shim drives. */
+export interface TauriWindow {
+  minimize: () => Promise<void>
+  toggleMaximize: () => Promise<void>
+  close: () => Promise<void>
+  isMaximized: () => Promise<boolean>
+  onResized: (cb: () => void) => Promise<() => void>
+  startDragging: () => Promise<void>
+}
+
+export type WindowSource = () => TauriWindow
+
+export interface Bridge {
+  isDesktop: true
+  platform: string
+  window: {
+    minimize: () => void
+    toggleMaximize: () => void
+    close: () => void
+    isMaximized: () => Promise<boolean>
+    onMaximizeChange: (cb: (maximized: boolean) => void) => () => void
+  }
+}
+
+/**
+ * Build the `window.metacubexd` object `packages/ui`'s useDesktop() reads.
+ *
+ * What this omits matters as much as what it provides. No `control` key means
+ * resolveControlConfig() falls back to <origin>/api/control, the /info probe
+ * fails, and every agent-only surface (kernel lifecycle, profiles,
+ * subscriptions, system proxy, TUN, WebDAV backup) hides itself — hosted-panel
+ * mode, reached by omission rather than by deleting UI. No `endpoint` key means
+ * no managed local backend is seeded. No `settings`/`hotkeys` keys means the
+ * Desktop section of the control page stays hidden.
+ *
+ * The window is resolved lazily on each call so nothing touches
+ * window.__TAURI_INTERNALS__ at install time.
+ */
+export function createBridge(
+  platform: string,
+  windowSource: WindowSource = getCurrentWindow,
+): Bridge {
+  return {
+    isDesktop: true,
+    platform,
+    window: {
+      minimize: () => void windowSource().minimize(),
+      toggleMaximize: () => void windowSource().toggleMaximize(),
+      close: () => void windowSource().close(),
+      isMaximized: () => windowSource().isMaximized(),
+
+      // Tauri has no maximize/unmaximize event, so derive it: every resize
+      // re-reads the flag. useWindowControls() only needs the current value.
+      onMaximizeChange: (cb) => {
+        let disposed = false
+        let unlisten: (() => void) | null = null
+
+        void windowSource()
+          .onResized(() => {
+            if (disposed) return
+            void windowSource()
+              .isMaximized()
+              .then((maximized) => {
+                if (!disposed) cb(maximized)
+              })
+              .catch(() => {})
+          })
+          .then((off) => {
+            if (disposed) off()
+            else unlisten = off
+          })
+          .catch(() => {})
+
+        return () => {
+          disposed = true
+          unlisten?.()
+        }
+      },
+    },
+  }
+}
+```
+
+- [ ] **Step 4: Run the test to verify it passes**
+
+Run: `pnpm --filter @metacubexd/tauri exec vitest run shim/__tests__/bridge.spec.ts`
+
+Expected: PASS — 6 passed.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add apps/tauri/shim/bridge.ts apps/tauri/shim/__tests__/bridge.spec.ts
+git commit -m "feat(tauri): expose the window-control bridge to the dashboard"
+```
+
+---
+
+## Task 6: Drag regions
+
+`packages/ui/components/TitleBar.vue` marks its 32px strip with `style="-webkit-app-region: drag"` and its button cluster with `-webkit-app-region: no-drag`. Those are Electron-only; wry ignores them, so without this module the frameless window cannot be moved. The inline `style` **attribute text** is matched rather than the CSSOM, because WebKitGTK drops properties it does not recognize.
+
+**Files:**
+
+- Create: `apps/tauri/shim/drag.ts`
+- Test: `apps/tauri/shim/__tests__/drag.spec.ts`
+
+- [ ] **Step 1: Write the failing test**
+
+Create `apps/tauri/shim/__tests__/drag.spec.ts`:
+
+```ts
+import type { TauriWindow } from '../bridge'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { installDragRegions } from '../drag'
+
+vi.mock('@tauri-apps/api/window', () => ({ getCurrentWindow: vi.fn() }))
+
+function fakeWindow() {
+  return {
+    minimize: vi.fn(async () => {}),
+    toggleMaximize: vi.fn(async () => {}),
+    close: vi.fn(async () => {}),
+    isMaximized: vi.fn(async () => false),
+    onResized: vi.fn(async () => () => {}),
+    startDragging: vi.fn(async () => {}),
+  } satisfies TauriWindow
+}
+
+// Mirrors TitleBar.vue: a draggable strip containing a no-drag button cluster.
+function renderTitleBar() {
+  document.body.innerHTML = `
+    <div id="bar" style="-webkit-app-region: drag">
+      <div id="controls" style="-webkit-app-region: no-drag">
+        <button id="close"><svg id="icon"></svg></button>
+      </div>
+    </div>
+    <main id="content"></main>
+  `
+}
+
+function mousedown(id: string, button = 0) {
+  const target = document.getElementById(id)
+  target?.dispatchEvent(
+    new MouseEvent('mousedown', { bubbles: true, cancelable: true, button }),
+  )
+}
+
+describe('installDragRegions', () => {
+  beforeEach(() => renderTitleBar())
+
+  it('starts a drag from a drag region', () => {
+    const win = fakeWindow()
+    installDragRegions(document, () => win)
+
+    mousedown('bar')
+
+    expect(win.startDragging).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not drag from a no-drag descendant', () => {
+    const win = fakeWindow()
+    installDragRegions(document, () => win)
+
+    mousedown('close')
+    mousedown('icon')
+
+    expect(win.startDragging).not.toHaveBeenCalled()
+  })
+
+  it('ignores content outside any drag region', () => {
+    const win = fakeWindow()
+    installDragRegions(document, () => win)
+
+    mousedown('content')
+
+    expect(win.startDragging).not.toHaveBeenCalled()
+  })
+
+  it('ignores non-primary buttons so right-click menus still work', () => {
+    const win = fakeWindow()
+    installDragRegions(document, () => win)
+
+    mousedown('bar', 2)
+
+    expect(win.startDragging).not.toHaveBeenCalled()
+  })
+
+  it('stops listening when uninstalled', () => {
+    const win = fakeWindow()
+    const uninstall = installDragRegions(document, () => win)
+
+    uninstall()
+    mousedown('bar')
+
+    expect(win.startDragging).not.toHaveBeenCalled()
+  })
+})
+```
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Run: `pnpm --filter @metacubexd/tauri exec vitest run shim/__tests__/drag.spec.ts`
+
+Expected: FAIL — `Failed to resolve import "../drag"`.
+
+- [ ] **Step 3: Write the implementation**
+
+Create `apps/tauri/shim/drag.ts`:
+
+```ts
+import type { WindowSource } from './bridge'
+import { getCurrentWindow } from '@tauri-apps/api/window'
+
+// Matched against the raw inline style attribute rather than the CSSOM:
+// -webkit-app-region is an Electron/WKWebView property, and WebKitGTK drops
+// properties it does not recognize, so style.getPropertyValue() returns ''.
+const DRAG = /(?:^|[;\s])(?:-webkit-)?app-region\s*:\s*drag/i
+const NO_DRAG = /(?:^|[;\s])(?:-webkit-)?app-region\s*:\s*no-drag/i
+
+/**
+ * Make `-webkit-app-region: drag` actually drag the window.
+ *
+ * packages/ui/components/TitleBar.vue is written for Electron, where that CSS
+ * property is honored natively. Under wry it does nothing, so the frameless
+ * window would be immovable. Walk up from the mousedown target: the nearest
+ * marked ancestor wins, which reproduces Electron's nesting semantics (a
+ * no-drag button cluster inside a drag strip stays clickable).
+ *
+ * Returns an uninstall function.
+ */
+export function installDragRegions(
+  doc: Document,
+  windowSource: WindowSource = getCurrentWindow,
+): () => void {
+  const onMouseDown = (event: MouseEvent) => {
+    if (event.button !== 0) return
+
+    for (
+      let node = event.target as Element | null;
+      node && node !== doc.documentElement;
+      node = node.parentElement
+    ) {
+      const style = node.getAttribute?.('style')
+      if (!style) continue
+      if (NO_DRAG.test(style)) return
+      if (DRAG.test(style)) {
+        void windowSource()
+          .startDragging()
+          .catch(() => {})
+        return
+      }
+    }
+  }
+
+  doc.addEventListener('mousedown', onMouseDown)
+
+  return () => doc.removeEventListener('mousedown', onMouseDown)
+}
+```
+
+- [ ] **Step 4: Run the test to verify it passes**
+
+Run: `pnpm --filter @metacubexd/tauri exec vitest run shim/__tests__/drag.spec.ts`
+
+Expected: PASS — 5 passed.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add apps/tauri/shim/drag.ts apps/tauri/shim/__tests__/drag.spec.ts
+git commit -m "feat(tauri): honor -webkit-app-region drag regions natively"
+```
+
+---
+
+## Task 7: Install entry and the esbuild bundle
+
+**Files:**
+
+- Create: `apps/tauri/shim/index.ts`
+- Create: `apps/tauri/shim/entry.ts`
+- Create: `apps/tauri/build-shim.mjs`
+- Test: `apps/tauri/shim/__tests__/index.spec.ts`
+
+- [ ] **Step 1: Write the failing test**
+
+Create `apps/tauri/shim/__tests__/index.spec.ts`:
+
+```ts
+import { describe, expect, it, vi } from 'vitest'
+import { install } from '../index'
+
+vi.mock('@tauri-apps/plugin-http', () => ({ fetch: vi.fn() }))
+vi.mock('@tauri-apps/plugin-websocket', () => ({
+  default: { connect: vi.fn() },
+}))
+vi.mock('@tauri-apps/api/window', () => ({ getCurrentWindow: vi.fn() }))
+
+function target(platform?: string) {
+  return {
+    fetch: vi.fn(),
+    WebSocket: class Original {},
+    document,
+    __MCXD_PLATFORM__: platform,
+  } as unknown as typeof globalThis & {
+    __MCXD_PLATFORM__?: string
+    metacubexd?: { platform: string }
+  }
+}
+
+describe('install', () => {
+  it('replaces fetch and WebSocket and publishes the bridge', () => {
+    const global = target('linux')
+    const originalFetch = global.fetch
+    const OriginalWebSocket = global.WebSocket
+
+    install(global)
+
+    expect(global.fetch).not.toBe(originalFetch)
+    expect(global.WebSocket).not.toBe(OriginalWebSocket)
+    expect(global.metacubexd?.platform).toBe('linux')
+  })
+
+  it('is idempotent, so a re-run cannot double-wrap fetch', () => {
+    const global = target('linux')
+
+    install(global)
+    const patched = global.fetch
+    install(global)
+
+    expect(global.fetch).toBe(patched)
+  })
+
+  it('falls back to a neutral platform when Rust injected none', () => {
+    const global = target(undefined)
+
+    install(global)
+
+    expect(global.metacubexd?.platform).toBe('linux')
+  })
+})
+```
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Run: `pnpm --filter @metacubexd/tauri exec vitest run shim/__tests__/index.spec.ts`
+
+Expected: FAIL — `Failed to resolve import "../index"`.
+
+- [ ] **Step 3: Write the install module**
+
+Create `apps/tauri/shim/index.ts`:
+
+```ts
+import { createBridge } from './bridge'
+import { installDragRegions } from './drag'
+import { createFetch } from './fetch'
+import { createWebSocketClass } from './websocket'
+
+interface ShimTarget {
+  fetch: typeof globalThis.fetch
+  WebSocket: unknown
+  document: Document
+  metacubexd?: unknown
+  /** Injected by src-tauri/src/main.rs ahead of this bundle. */
+  __MCXD_PLATFORM__?: string
+  __MCXD_SHIM_INSTALLED__?: boolean
+}
+
+/**
+ * Patch a global object so the dashboard talks to the network through Tauri.
+ *
+ * Runs as a webview initialization script, i.e. at document-start on every
+ * page load, before any application code. Nothing here touches
+ * window.__TAURI_INTERNALS__ — the plugin calls it lazily, per request — so
+ * install order relative to Tauri's own bootstrap does not matter.
+ */
+export function install(target: ShimTarget): void {
+  if (target.__MCXD_SHIM_INSTALLED__) return
+  target.__MCXD_SHIM_INSTALLED__ = true
+
+  target.fetch = createFetch(target.fetch.bind(target))
+  target.WebSocket = createWebSocketClass()
+
+  // Electron reports linux/darwin/win32; main.rs maps Rust's OS names onto
+  // those. Default to linux if the prelude is somehow absent — only the darwin
+  // branch changes UI behavior, so this errs toward the common case.
+  target.metacubexd = createBridge(target.__MCXD_PLATFORM__ ?? 'linux')
+
+  installDragRegions(target.document)
+}
+```
+
+- [ ] **Step 4: Run the test to verify it passes**
+
+Run: `pnpm --filter @metacubexd/tauri exec vitest run shim/__tests__/index.spec.ts`
+
+Expected: PASS — 3 passed.
+
+- [ ] **Step 5: Write the bundle entry**
+
+Create `apps/tauri/shim/entry.ts`. It exists so importing `index.ts` in a spec does not patch the test runner's globals.
+
+```ts
+import { install } from './index'
+
+install(globalThis as unknown as Parameters<typeof install>[0])
+```
+
+- [ ] **Step 6: Write the bundler**
+
+Create `apps/tauri/build-shim.mjs`:
+
+```js
+// Bundles the transport shim into a single dependency-free IIFE that
+// src-tauri/src/main.rs embeds with include_str! and injects as a webview
+// initialization script. Left unminified: when something misbehaves in the
+// packaged app, this is the file you read in the devtools.
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { build } from 'esbuild'
+
+const here = dirname(fileURLToPath(import.meta.url))
+const outfile = resolve(here, 'src-tauri/shim.js')
+
+await build({
+  entryPoints: [resolve(here, 'shim/entry.ts')],
+  outfile,
+  bundle: true,
+  format: 'iife',
+  platform: 'browser',
+  target: ['es2022'],
+  minify: false,
+  legalComments: 'none',
+  banner: {
+    js: '/* Generated by apps/tauri/build-shim.mjs. Do not edit. */',
+  },
+})
+
+console.log(`shim bundled -> ${outfile}`)
+```
+
+- [ ] **Step 7: Verify the bundle builds and is self-contained**
+
+Run: `pnpm --filter @metacubexd/tauri build:shim`
+
+Expected: `shim bundled -> .../apps/tauri/src-tauri/shim.js`
+
+Run: `node -e "const s=require('node:fs').readFileSync('apps/tauri/src-tauri/shim.js','utf8'); if(/^\s*(import|export)\s/m.test(s)) throw new Error('not self-contained'); console.log('ok, bytes:', s.length)"`
+
+Expected: `ok, bytes: <a number over 10000>`
+
+- [ ] **Step 8: Run the whole suite and the typecheck**
+
+Run: `pnpm --filter @metacubexd/tauri test`
+
+Expected: PASS — 6 spec files, 37 tests (origin 7, fetch 5, websocket 11, bridge 6, drag 5, index 3).
+
+Run: `pnpm --filter @metacubexd/tauri typecheck`
+
+Expected: no output, exit 0.
+
+- [ ] **Step 9: Commit**
+
+```bash
+git add apps/tauri/shim/index.ts apps/tauri/shim/entry.ts apps/tauri/shim/__tests__/index.spec.ts apps/tauri/build-shim.mjs
+git commit -m "feat(tauri): bundle the transport shim as an injectable IIFE"
+```
+
+---
+
+## Task 8: The Tauri shell
+
+**Files:**
+
+- Create: `apps/tauri/src-tauri/Cargo.toml`
+- Create: `apps/tauri/src-tauri/build.rs`
+- Create: `apps/tauri/src-tauri/tauri.conf.json`
+- Create: `apps/tauri/src-tauri/capabilities/default.json`
+- Create: `apps/tauri/src-tauri/src/main.rs`
+- Create: `apps/tauri/src-tauri/icons/*` (generated)
+
+- [ ] **Step 1: Write the Cargo manifest**
+
+Create `apps/tauri/src-tauri/Cargo.toml`. Versions are `"2"` so cargo tracks the 2.x line, which is how `tauri add` writes them; the lockfile pins the exact build.
+
+```toml
+[package]
+name = "metacubexd-tauri"
+version = "1.270.6"
+description = "MetaCubeXD — Mihomo dashboard"
+authors = ["TTsdzb"]
+license = "MIT"
+edition = "2021"
+rust-version = "1.77.2"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-http = "2"
+tauri-plugin-websocket = "2"
+tauri-plugin-window-state = "2"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true
+```
+
+- [ ] **Step 2: Write the build script**
+
+Create `apps/tauri/src-tauri/build.rs`:
+
+```rust
+fn main() {
+    tauri_build::build()
+}
+```
+
+- [ ] **Step 3: Write the Tauri config**
+
+Create `apps/tauri/src-tauri/tauri.conf.json`. `frontendDist` reaches up three levels (`src-tauri` → `apps/tauri` → `apps` → repo root) to consume upstream's generate output in place — no copy step. `windows` is empty because the window is built in Rust, which is the only way to attach an initialization script.
+
+```json
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "MetaCubeXD",
+  "version": "1.270.6",
+  "identifier": "io.github.ttsdzb.metacubexd",
+  "build": {
+    "beforeDevCommand": "pnpm --filter @metacubexd/ui dev",
+    "devUrl": "http://localhost:3000",
+    "beforeBuildCommand": "pnpm --filter @metacubexd/ui generate:desktop",
+    "frontendDist": "../../../packages/ui/.output/public"
+  },
+  "app": {
+    "windows": [],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["deb"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  }
+}
+```
+
+- [ ] **Step 4: Write the capability set**
+
+Create `apps/tauri/src-tauri/capabilities/default.json`. The HTTP scope is necessarily open: the user types arbitrary backend addresses into the dashboard, so no narrower allowlist can be known ahead of time.
+
+```json
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Dashboard shell: native HTTP and WebSocket to any user-specified backend, plus custom-title-bar window controls.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-close",
+    "core:window:allow-is-maximized",
+    "core:window:allow-start-dragging",
+    {
+      "identifier": "http:default",
+      "allow": [{ "url": "http://*" }, { "url": "https://*" }]
+    },
+    "websocket:default"
+  ]
+}
+```
+
+- [ ] **Step 5: Write the Rust entry point**
+
+Create `apps/tauri/src-tauri/src/main.rs`:
+
+```rust
+// Keeps a console window from opening alongside the release build on Windows.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
+use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
+
+/// The transport shim, bundled by `apps/tauri/build-shim.mjs`. Every dev and
+/// build script regenerates it before cargo runs.
+const SHIM: &str = include_str!("../shim.js");
+
+/// Electron-style platform name. `packages/ui`'s `useDesktop()` compares
+/// against these strings, and `darwin` gates its macOS branches.
+fn platform() -> &'static str {
+    match std::env::consts::OS {
+        "macos" => "darwin",
+        "windows" => "win32",
+        other => other,
+    }
+}
+
+fn main() {
+    tauri::Builder::default()
+        .plugin(tauri_plugin_http::init())
+        .plugin(tauri_plugin_websocket::init())
+        .plugin(tauri_plugin_window_state::Builder::default().build())
+        .setup(|app| {
+            // One script: a prelude carrying the platform, then the bundle.
+            // {:?} on a &str emits a correctly escaped JS string literal.
+            let script = format!(
+                "window.__MCXD_PLATFORM__ = {:?};\n{}",
+                platform(),
+                SHIM
+            );
+
+            // The window is built here rather than declared in tauri.conf.json
+            // because an initialization script can only be attached through the
+            // builder. Decorations are off so the dashboard's own TitleBar
+            // component provides the title bar.
+            WebviewWindowBuilder::new(app.handle(), "main", WebviewUrl::default())
+                .title("MetaCubeXD")
+                .inner_size(1280.0, 800.0)
+                .min_inner_size(720.0, 480.0)
+                .decorations(false)
+                .resizable(true)
+                .initialization_script(&script)
+                .build()?;
+
+            Ok(())
+        })
+        .run(tauri::generate_context!())
+        .expect("error while running tauri application");
+}
+```
+
+- [ ] **Step 6: Generate the application icons**
+
+The dashboard's own PWA icon is the source, so the app matches the web build.
+
+Run: `pnpm --filter @metacubexd/tauri exec tauri icon ../../packages/ui/public/pwa-512x512.png`
+
+Expected: writes `apps/tauri/src-tauri/icons/` with `32x32.png`, `128x128.png`, `128x128@2x.png`, `icon.icns`, `icon.ico` and the Windows Store sizes.
+
+- [ ] **Step 7: Verify the Rust side compiles**
+
+The shim and the frontend output must both exist first: `include_str!` needs the bundle, and `generate_context!` reads `frontendDist`.
+
+Run: `pnpm --filter @metacubexd/tauri build:shim`
+
+Expected: `shim bundled -> .../src-tauri/shim.js`
+
+Run: `pnpm --filter @metacubexd/ui generate:desktop`
+
+Expected: Nuxt finishes with `You can preview this build`, and `packages/ui/.output/public/index.html` exists.
+
+Run: `cargo check --manifest-path apps/tauri/src-tauri/Cargo.toml`
+
+Expected: `Finished` with no errors. First run downloads and compiles the dependency tree — several minutes is normal.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add apps/tauri/src-tauri
+git commit -m "feat(tauri): add the Rust shell that injects the shim
+
+Builds the frameless window in setup() rather than declaring it in
+tauri.conf.json, because an initialization script can only be attached
+through the window builder."
+```
+
+---
+
+## Task 9: Run it, and document the fork
+
+**Files:**
+
+- Create: `FORK.md`
+
+- [ ] **Step 1: Launch the dev app**
+
+Run: `pnpm dev:tauri`
+
+Expected: esbuild prints the shim path, Nuxt dev starts on `http://localhost:3000`, cargo compiles, and a frameless window opens showing the dashboard's connect screen.
+
+If Nuxt picks a port other than 3000 (because something else holds it), `tauri dev` will hang polling `devUrl`. Free the port and rerun rather than editing the config.
+
+- [ ] **Step 2: Smoke-test against a real Mihomo**
+
+Work through these in the running window. Every one must pass; a failure here means the shim is wrong, not the checklist.
+
+- [ ] The title bar drags the window, and the minimize/maximize/close buttons work.
+- [ ] Double-clicking the title bar toggles maximize.
+- [ ] Add a backend over plain `http://` on the LAN (e.g. `http://192.168.1.5:9090`) with its secret. It connects — this is the CORS/mixed-content case that fails in a browser.
+- [ ] Proxies, Rules, and Connections pages populate.
+- [ ] The traffic chart moves and the Logs page streams, i.e. the WebSocket adapter delivers frames.
+- [ ] Restart the backend; both streams recover on their own within a few seconds (the UI's reconnect fires off the adapter's synthesized `onclose`).
+- [ ] The latency test on the connect screen returns numbers rather than timeouts.
+- [ ] No kernel, profile, subscription, system-proxy, or TUN UI appears anywhere — the app is in hosted-panel mode.
+- [ ] Resize and move the window, quit, relaunch: it reopens at the same size and position.
+
+If the frameless window proves awkward to resize on your desktop environment, the documented fallback is `.decorations(true)` in `main.rs` plus dropping the bridge's `isDesktop` flag, which restores OS decorations and hides the custom title bar. Do not take that step unless the smoke test actually fails.
+
+- [ ] **Step 3: Produce a release build**
+
+Run: `pnpm build:tauri`
+
+Expected: Nuxt generates, cargo builds in release, and a `.deb` lands in `apps/tauri/src-tauri/target/release/bundle/deb/`.
+
+- [ ] **Step 4: Document the fork**
+
+Create `FORK.md` at the repo root. A new file rather than a `README.md` edit: README is a large upstream-owned file, and editing it manufactures exactly the merge conflicts this design exists to avoid.
+
+````markdown
+# Fork notes
+
+This fork replaces metacubexd's Electron desktop app with a Tauri shell that
+runs the upstream dashboard against a **user-managed** Mihomo kernel — on this
+machine or another host on the LAN. It does not bundle, supervise, or configure
+a kernel.
+
+## What changed
+
+- `apps/tauri` — new: the Tauri v2 shell plus a transport shim that replaces
+  `fetch` and `WebSocket` with native, CORS-free implementations for
+  cross-origin traffic. Injected as a webview initialization script, so
+  `packages/ui` needs no changes.
+- `pnpm-workspace.yaml`, `package.json`, `.gitignore` — `apps/desktop` and
+  `apps/server` are excluded from the workspace. Their files are untouched on
+  disk so upstream commits that edit them still merge cleanly. The root scripts
+  that filtered on them are gone.
+- `packages/ui`, `packages/agent`, `packages/config-editor` — unmodified.
+
+With no Control Agent reachable, the dashboard runs in hosted-panel mode: every
+kernel-management surface hides itself. That is the intended behavior here.
+
+## Commands
+
+```bash
+pnpm install
+pnpm dev:tauri    # Nuxt dev + Tauri window, with HMR
+pnpm build:tauri  # release bundle in apps/tauri/src-tauri/target/release/bundle
+pnpm dev          # plain browser dev, no Tauri
+```
+
+## Merging upstream
+
+```bash
+git remote add upstream https://github.com/MetaCubeX/metacubexd.git   # once
+git fetch upstream
+git merge upstream/main
+```
+
+Conflicts should be confined to `pnpm-workspace.yaml`, `package.json`, and
+`.gitignore`. Everything this fork adds lives in new paths.
+
+After a merge that touched `packages/ui`, run `pnpm --filter @metacubexd/tauri
+test`. Those specs encode what the shim assumes about the dashboard — the
+`window.metacubexd` bridge shape, `event.data` carrying JSON text, the
+`-webkit-app-region` title bar — so they are what catches an upstream change
+that breaks the shell.
+
+## Not yet done
+
+GitHub Actions release workflow, Windows and macOS bundles, tray icon,
+launch-at-login.
+````
+
+- [ ] **Step 5: Add the upstream remote**
+
+Run: `git remote add upstream https://github.com/MetaCubeX/metacubexd.git && git remote -v`
+
+Expected: `origin` and `upstream` both listed.
+
+- [ ] **Step 6: Final verification**
+
+Run: `pnpm --filter @metacubexd/tauri test && pnpm --filter @metacubexd/tauri typecheck && pnpm typecheck`
+
+Expected: all pass. `pnpm typecheck` covers `@metacubexd/ui`, `@metacubexd/config-editor`, and `@metacubexd/tauri`.
+
+Run: `git status --short packages/`
+
+Expected: **no output.** `packages/` must be untouched — that is the constraint this whole design rests on. Any output here is a bug to fix before committing.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add FORK.md
+git commit -m "docs: document the Tauri fork and the upstream merge routine"
+```
+
+---
+
+## Done when
+
+- `pnpm dev:tauri` opens a working dashboard window with HMR.
+- `pnpm build:tauri` produces a `.deb`.
+- The Task 9 smoke checklist passes against a real Mihomo over plain `http://`.
+- `git status --short packages/` is empty.
+- `pnpm --filter @metacubexd/tauri test` passes: 6 spec files, 37 tests.
