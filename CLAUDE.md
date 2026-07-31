@@ -41,11 +41,10 @@ wiring in `apps/server`; Electron/OS wiring in `apps/desktop`.
 Run from the repository root unless noted.
 
 > `apps/server` and `apps/desktop` are excluded from the pnpm workspace (see
-> Workspace map above) but their files remain on disk. GitHub Actions
-> workflows, `apps/server/Dockerfile`, and `release-please-config.json` still
-> reference those workspaces and will fail confusingly if invoked — fixing
-> them belongs to the deferred CI/release milestone, planned after the basic
-> Tauri app works.
+> Workspace map above) but their files remain on disk. `apps/server/Dockerfile`
+> still references those workspaces and will fail confusingly if invoked.
+> CI is now fork-owned: upstream's `release.yml` was deleted, and this
+> milestone adds `verify-tauri.yml` and `release-tauri.yml` in its place.
 
 ```bash
 pnpm install
@@ -59,8 +58,8 @@ pnpm lint           # pnpm -r lint; currently UI only, and it runs eslint --fix
 ```
 
 The Electron desktop installer flow (renderer generation/copy, kernel
-staging, `electron-builder`, and `.github/workflows/release.yml`) belongs to
-the excluded `apps/desktop` app and is not built by this fork.
+staging, and `electron-builder`) belongs to the excluded `apps/desktop` app
+and is not built by this fork.
 
 ### Tests
 

@@ -41,6 +41,7 @@ jobs:
       - name: Run unit tests
         run: |
           pnpm --filter @metacubexd/agent test
+          pnpm --filter @metacubexd/config-editor test
           pnpm --filter @metacubexd/tauri test
           pnpm --filter @metacubexd/ui test:coverage
 
