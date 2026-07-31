@@ -1,6 +1,6 @@
 import PluginWebSocket from '@tauri-apps/plugin-websocket'
 
-/** The frame shape `tauri-plugin-websocket` pushes up its channel. */
+/** The frame shape `tauri-plugin-websocket` pushes up its channel on success. */
 export type Message =
   | { type: 'Text'; data: string }
   | { type: 'Binary'; data: number[] }
@@ -8,9 +8,32 @@ export type Message =
   | { type: 'Pong'; data: number[] }
   | { type: 'Close'; data: { code: number; reason: string } | null }
 
+/**
+ * What the plugin's `addListener` callback actually delivers. The plugin's
+ * own TypeScript declarations only describe `Message` — the success path —
+ * but its Rust read loop pushes onto the same channel in two more cases:
+ *
+ *   - a bare JSON string, because a read error is serialized via `Error`'s
+ *     `Serialize` impl (`serializer.serialize_str(self.to_string())`), not
+ *     as a tagged `Message`. This is the *common* kernel-restart path:
+ *     Mihomo's process exit drops the TCP connection with no close
+ *     handshake, so tokio-tungstenite yields `Err(...)`, never
+ *     `Ok(Message::Close(..))`;
+ *   - `null`, for `Ok(Message::Frame(_))`, a raw-frame variant this plugin
+ *     doesn't otherwise surface.
+ *
+ * Both must be treated as abnormal termination rather than ignored. Typing
+ * the listener callback as `Message` (as the plugin's own declarations do)
+ * hides this: a bare string's `.type` is `undefined`, no `switch` case
+ * matches, and the socket would sit in OPEN forever with no error and no
+ * `onclose` — so `useWebSocket.ts` never calls `scheduleReconnect()`, and
+ * the dashboard goes silently, permanently stale.
+ */
+export type Incoming = Message | string | null
+
 /** The slice of the plugin's socket this adapter drives. */
 export interface PluginSocket {
-  addListener: (cb: (msg: Message) => void) => () => void
+  addListener: (cb: (msg: Incoming) => void) => () => void
   send: (message: string) => Promise<void>
   disconnect: () => Promise<void>
 }
@@ -60,10 +83,21 @@ export function createWebSocketClass(
     #socket: PluginSocket | null = null
     #pending: string[] = []
     #closing = false
+    #unlisten: (() => void) | null = null
 
     constructor(url: string | URL, _protocols?: string | string[]) {
       this.url = String(url)
-      void this.#open()
+      // #open() only throws if a consumer handler (onopen/onerror/onclose)
+      // throws synchronously; log rather than let it vanish as an unhandled
+      // rejection, the same way a throwing platform handler would surface
+      // in the console instead of nowhere.
+      void this.#open().catch((error: unknown) => {
+        console.error(
+          'TauriWebSocket: unhandled error while opening',
+          this.url,
+          error,
+        )
+      })
     }
 
     async #open(): Promise<void> {
@@ -71,8 +105,7 @@ export function createWebSocketClass(
       try {
         socket = await connect(this.url)
       } catch (error) {
-        this.onerror?.(new Event('error'))
-        this.#finish(1006, String(error))
+        this.#abnormalClose(String(error))
         return
       }
 
@@ -86,7 +119,7 @@ export function createWebSocketClass(
 
       this.#socket = socket
       this.readyState = OPEN
-      socket.addListener((message) => this.#receive(message))
+      this.#unlisten = socket.addListener((message) => this.#receive(message))
 
       for (const message of this.#pending.splice(0)) {
         void socket.send(message).catch(() => {})
@@ -95,8 +128,22 @@ export function createWebSocketClass(
       this.onopen?.(new Event('open'))
     }
 
-    #receive(message: Message): void {
+    #receive(message: Incoming): void {
       if (this.readyState !== OPEN) return
+
+      // Untagged payload: the plugin's error channel, not a frame (see
+      // `Incoming`). Code 1006 is what the platform reports for an abnormal
+      // close with no close frame, which is exactly what this is.
+      //
+      // Also note: the plugin only removes its writer entry from the
+      // Rust-side `ConnectionManager` on a clean `Ok(Message::Close(_))`. An
+      // abnormal close like this one leaks that entry on the Rust side — an
+      // upstream limitation this adapter cannot fix from JS. Recorded here
+      // so nobody goes hunting for a JS-side cause.
+      if (typeof message !== 'object' || message === null) {
+        this.#abnormalClose(message === null ? '' : String(message))
+        return
+      }
 
       switch (message.type) {
         case 'Text':
@@ -117,7 +164,22 @@ export function createWebSocketClass(
         case 'Ping':
         case 'Pong':
           break
+        default: {
+          // Defensive: an unrecognized future frame type must not silently
+          // freeze the socket the same way an unhandled envelope shape would.
+          const unexpected = message as { type: unknown }
+          this.#abnormalClose(
+            `unrecognized frame type: ${String(unexpected.type)}`,
+          )
+          break
+        }
       }
+    }
+
+    /** onerror then a 1006 (abnormal) close — the plugin's error channel. */
+    #abnormalClose(reason: string): void {
+      this.onerror?.(new Event('error'))
+      this.#finish(1006, reason)
     }
 
     #finish(code: number, reason: string): void {
@@ -125,6 +187,10 @@ export function createWebSocketClass(
       this.readyState = CLOSED
       this.#socket = null
       this.#pending = []
+      // Detach from the plugin's socket so a discarded adapter doesn't keep
+      // its handler graph (which closes over the Pinia stores) alive.
+      this.#unlisten?.()
+      this.#unlisten = null
       this.onclose?.(
         new CloseEvent('close', { code, reason, wasClean: code === 1000 }),
       )
@@ -136,8 +202,11 @@ export function createWebSocketClass(
       const message = String(data)
       const socket = this.#socket
       if (!socket) {
-        // Still CONNECTING. The platform WebSocket throws here; buffering is
-        // friendlier and matches how callers actually expect it to behave.
+        // Still CONNECTING. Implementing send() at all is worth doing
+        // properly — a WebSocket without it is a strange object — and the
+        // platform WebSocket throws here; buffering instead lets a send
+        // issued during the ordinary CONNECTING race succeed once the
+        // socket opens.
         this.#pending.push(message)
         return
       }
@@ -159,8 +228,22 @@ export function createWebSocketClass(
       this.readyState = CLOSING
       void socket
         .disconnect()
+        // disconnect() rejects (e.g. `ConnectionNotFound`) when the
+        // Rust-side connection is already gone — expected for a socket
+        // that already died abnormally. Swallow it so #finish still runs.
         .catch(() => {})
         .finally(() => this.#finish(code, reason))
+        .catch((error: unknown) => {
+          // #finish() calls the consumer's onclose synchronously; if that
+          // throws, .finally()'s returned promise rejects. Log with enough
+          // context to find the socket rather than let it vanish as an
+          // unhandled rejection.
+          console.error(
+            'TauriWebSocket: unhandled error while closing',
+            this.url,
+            error,
+          )
+        })
     }
   }
 }

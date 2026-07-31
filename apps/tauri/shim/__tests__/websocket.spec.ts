@@ -1,4 +1,4 @@
-import type { Message, PluginSocket } from '../websocket'
+import type { Incoming, PluginSocket } from '../websocket'
 import { describe, expect, it, vi } from 'vitest'
 import { createWebSocketClass } from '../websocket'
 
@@ -7,22 +7,31 @@ vi.mock('@tauri-apps/plugin-websocket', () => ({
 }))
 
 // A stand-in for the plugin's socket. `emit` plays the role of the Rust side
-// pushing a frame up the channel.
-function fakeSocket() {
-  const listeners: ((msg: Message) => void)[] = []
+// pushing a frame — or, per `Incoming`, an untagged error string or a raw
+// `null` frame — up the channel. `unlisten` is the disposer `addListener`
+// hands back; tests assert it gets called so a finished socket doesn't keep
+// its handler graph alive.
+function fakeSocket(options: { disconnectRejects?: boolean } = {}) {
+  const listeners: ((msg: Incoming) => void)[] = []
+  const unlisten = vi.fn()
   const socket: PluginSocket = {
     addListener: (cb) => {
       listeners.push(cb)
-      return () => {}
+      return unlisten
     },
     send: vi.fn(async () => {}),
-    disconnect: vi.fn(async () => {}),
+    disconnect: options.disconnectRejects
+      ? vi.fn(async () => {
+          throw new Error('ConnectionNotFound')
+        })
+      : vi.fn(async () => {}),
   }
   return {
     socket,
-    emit: (msg: Message) => listeners.forEach((cb) => cb(msg)),
+    emit: (msg: Incoming) => listeners.forEach((cb) => cb(msg)),
     sent: socket.send as ReturnType<typeof vi.fn>,
     disconnected: socket.disconnect as ReturnType<typeof vi.fn>,
+    unlisten,
   }
 }
 
@@ -47,6 +56,9 @@ describe('createWebSocketClass', () => {
     const connect = vi.fn(async () => socket)
     const Ctor = createWebSocketClass(connect)
 
+    // `new` here is only for its connect() side effect. The repo's eslint
+    // config enforces `no-new`; `void` documents that discarding the
+    // instance is intentional rather than a mistake.
     void new Ctor('ws://192.168.1.5:9090/logs?token=abc')
     await settle()
 
@@ -111,6 +123,40 @@ describe('createWebSocketClass', () => {
     expect(ws.readyState).toBe(3)
   })
 
+  it("treats an untagged string payload (the plugin's read-error channel) as an abnormal close", async () => {
+    const { socket, emit } = fakeSocket()
+    const Ctor = createWebSocketClass(async () => socket)
+    const ws = new Ctor('ws://host/traffic')
+    const order: string[] = []
+    ws.onerror = () => order.push('error')
+    ws.onclose = () => order.push('close')
+
+    await settle()
+    // This is what tokio-tungstenite's read loop actually pushes on a read
+    // error — `Error`'s Serialize impl is a bare string, not a tagged
+    // `Message`. This is the *common* kernel-restart path: Mihomo's process
+    // exit drops the TCP connection with no close handshake, so the plugin
+    // never emits `Ok(Message::Close(..))`.
+    emit('Connection reset without closing handshake')
+
+    expect(order).toEqual(['error', 'close'])
+    expect(ws.readyState).toBe(3)
+  })
+
+  it("handles a null payload (the plugin's raw-frame case) as an abnormal close without throwing", async () => {
+    const { socket, emit } = fakeSocket()
+    const Ctor = createWebSocketClass(async () => socket)
+    const ws = new Ctor('ws://host/traffic')
+    const onclose = vi.fn()
+    ws.onclose = onclose
+
+    await settle()
+    expect(() => emit(null)).not.toThrow()
+
+    expect(onclose).toHaveBeenCalledTimes(1)
+    expect(ws.readyState).toBe(3)
+  })
+
   it('reports a failed connect as error then close', async () => {
     const Ctor = createWebSocketClass(async () => {
       throw new Error('connection refused')
@@ -142,6 +188,36 @@ describe('createWebSocketClass', () => {
     expect(disconnected).toHaveBeenCalledTimes(1)
     expect(onclose).toHaveBeenCalledTimes(1)
     expect(ws.readyState).toBe(3)
+  })
+
+  it('still fires onclose when disconnect() rejects, e.g. ConnectionNotFound on an already-gone connection', async () => {
+    const { socket, disconnected } = fakeSocket({ disconnectRejects: true })
+    const Ctor = createWebSocketClass(async () => socket)
+    const ws = new Ctor('ws://host/traffic')
+    const onclose = vi.fn()
+    ws.onclose = onclose
+
+    await settle()
+    ws.close()
+    await settle()
+
+    expect(disconnected).toHaveBeenCalledTimes(1)
+    expect(onclose).toHaveBeenCalledTimes(1)
+    expect(ws.readyState).toBe(3)
+  })
+
+  it('unsubscribes the plugin listener once the socket finishes', async () => {
+    const { socket, unlisten } = fakeSocket()
+    const Ctor = createWebSocketClass(async () => socket)
+    const ws = new Ctor('ws://host/traffic')
+
+    await settle()
+    expect(unlisten).not.toHaveBeenCalled()
+
+    ws.close()
+    await settle()
+
+    expect(unlisten).toHaveBeenCalledTimes(1)
   })
 
   it('does not deliver frames after close(), matching intentional teardown', async () => {
