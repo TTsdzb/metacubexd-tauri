@@ -1308,6 +1308,25 @@ Expected: FAIL — `Failed to resolve import "../drag"`.
 
 - [ ] **Step 3: Write the implementation**
 
+> **SUPERSEDED — do not reproduce the block below verbatim.** Review found two
+> defects in it, both fixed in commit `512bd9b4`; read
+> `apps/tauri/shim/drag.ts` for the correct implementation.
+>
+> 1. **Double-click-to-maximize was broken by construction.** `startDragging()`
+>    hands the pointer to the window manager, which enters a modal move loop and
+>    swallows the mouseup — so no `click`, and therefore no `dblclick`.
+>    `TitleBar.vue`'s `@dblclick` handler became dead code on Windows and Linux.
+>    Tauri's own drag script (vendored at
+>    `tauri-2.11.3/src/window/scripts/drag.js`) branches on `e.detail === 2` to
+>    toggle maximize instead of dragging; the fix mirrors that.
+> 2. **The raw-attribute read may never match.** Vue's compiler rewrites a static
+>    `style="..."` into a style object prop, and `runtime-dom`'s `setStyle`
+>    applies it through the CSSOM — it never calls `setAttribute`. So if
+>    WebKitGTK really drops the unrecognized property, the attribute never
+>    materializes and this module is a silent no-op. The fix reads both sources.
+>    The specs missed it because the fixture builds DOM with `innerHTML`, which
+>    does set the attribute — a construction path the real app never uses.
+
 Create `apps/tauri/shim/drag.ts`:
 
 ```ts
