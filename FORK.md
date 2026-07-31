@@ -70,10 +70,25 @@ git fetch upstream
 git merge upstream/main
 ```
 
-Conflicts should be confined to `pnpm-workspace.yaml`, `package.json`,
-`pnpm-lock.yaml`, `.gitignore`, and `CLAUDE.md`. Everything this fork adds lives
-in new paths. Regenerate the lockfile with pnpm rather than resolving it by
-hand.
+Ordinary content conflicts should be confined to files this fork edited in
+place: `pnpm-workspace.yaml`, `package.json`, `pnpm-lock.yaml`, `.gitignore`,
+`CLAUDE.md`, `.github/workflows/unit-tests.yml`, `.github/workflows/stale.yml`,
+and `release-please-config.json`. Regenerate the lockfile with pnpm rather than
+resolving it by hand.
+
+This fork also **deleted** `.github/workflows/release.yml`. If upstream has
+since touched that file, the merge reports a **modify/delete** conflict rather
+than an ordinary content conflict: git pauses with the file staged for
+deletion instead of showing conflict markers, and `git status` lists it as
+`deleted by us`. Resolve it by keeping the deletion (`git rm
+.github/workflows/release.yml` if the merge re-adds upstream's copy) — this
+fork's CI is its own (`verify-tauri.yml` and `release-tauri.yml`, see
+[Releasing](#releasing) below), and `release.yml` published to
+`ghcr.io/metacubex/*` and `d.metacubex.one`, neither of which this fork owns.
+
+Everything else this fork adds — `apps/tauri`,
+`.github/workflows/verify-tauri.yml`, `.github/workflows/release-tauri.yml` —
+lives at paths upstream does not have, so merging cannot conflict there.
 
 After a merge that touched `packages/ui`, run `pnpm --filter @metacubexd/tauri
 test` — 7 spec files, 95 tests. Those specs encode what the shim assumes about
@@ -83,8 +98,21 @@ change that breaks the shell.
 
 ## Platform support
 
-Linux is what is built and smoke-tested today. `pnpm build:tauri` produces a
-`.deb` and an `.rpm` (~7.8 MB each) with no special setup.
+CI now builds all three platforms on every tagged release (see
+[Releasing](#releasing)); Linux is what has been smoke-tested by hand so far.
+`pnpm build:tauri` produces a `.deb` and an `.rpm` (~7.8 MB each) with no
+special setup.
+
+CI's Linux runner is pinned to `ubuntu-22.04` rather than `ubuntu-latest`, and
+deliberately so: it sets the glibc floor for the resulting `.deb`/`.rpm`/
+AppImage, and its binutils `strip` is old enough that the AppImage step builds
+without the `NO_STRIP` workaround below. GitHub begins deprecating
+`ubuntu-22.04` runners on 2026-09-17; migrating off it needs both of those
+reasons re-checked against the newer image, not a blind version bump. One
+caveat on the strip claim: `verify-tauri.yml` builds with `--no-bundle`, so no
+bundler — AppImage included — actually runs on every push. The first real test
+of "AppImage builds without `NO_STRIP` on `ubuntu-22.04`" in CI is the first
+release tag, when `release-tauri.yml`'s Linux leg bundles for real.
 
 ### AppImage needs `NO_STRIP=true` on a rolling-release host
 
@@ -104,7 +132,10 @@ failed to bundle project: `failed to run linuxdeploy`
 `linuxdeploy` bundles an old binutils `strip` that does not understand the
 `.relr.dyn` relocation sections current system libraries carry. `NO_STRIP` skips
 that pass. Verified working here: it produces a runnable
-`MetaCubeXD_1.270.6_amd64.AppImage`.
+`MetaCubeXD_<version>_amd64.AppImage`, where `<version>` is the Tauri shell's own
+version (`apps/tauri/src-tauri/tauri.conf.json`, or the tag in CI) — the shell
+is versioned independently of the dashboard now, so quoting a specific number
+here would only go stale again.
 
 Two things to know before reaching for it:
 
@@ -117,8 +148,8 @@ Two things to know before reaching for it:
   `run-tauri.mjs` rather than applied automatically. CI runners on older images
   do not need it and should not set it.
 
-Leave `"targets": "all"` in `tauri.conf.json` alone — that setting is what will
-give the Windows and macOS runners their bundles.
+Leave `"targets": "all"` in `tauri.conf.json` alone — that setting is what
+gives the Windows and macOS runners their bundles in `release-tauri.yml`.
 
 Two adjacent flags, since they are easy to confuse:
 
@@ -129,12 +160,14 @@ Two adjacent flags, since they are easy to confuse:
   Right flag for a runnable build without touching any bundler; wrong one if an
   AppImage is the goal.
 
-The scaffold deliberately keeps every other Tauri target reachable, roughly in
-this planned order:
+The scaffold deliberately keeps every other Tauri target reachable. Of the
+three milestones originally planned here, two are now done:
 
-1. GitHub Actions release workflow;
-2. Windows and macOS bundles (`"targets": "all"` already covers them);
-3. **Android** — `tauri android init`, then `tauri android dev`.
+1. ~~GitHub Actions release workflow~~ — done; see [Releasing](#releasing).
+2. ~~Windows and macOS bundles~~ — done (`"targets": "all"` already covered
+   them; `release-tauri.yml` now builds all three platforms on every tag push).
+3. **Android** — the remaining item: `tauri android init`, then `tauri android
+dev`.
 
 Nothing under `src-tauri/` should be deleted for being unused on Linux. The
 `lib.rs`/`main.rs` split, `#[cfg_attr(mobile, tauri::mobile_entry_point)]`, the
@@ -148,6 +181,117 @@ The title bar is already handled: the bridge's `isDesktop` comes from Rust's
 neither the desktop title bar nor its window controls.
 
 Also not done: tray icon, launch-at-login (both desktop-only).
+
+## Releasing
+
+CI is fork-owned. Upstream's `release.yml` was deleted — it published to
+`ghcr.io/metacubex/*` and `d.metacubex.one`, neither of which this fork owns.
+
+| Workflow            | Trigger        | Does                                            |
+| ------------------- | -------------- | ----------------------------------------------- |
+| `unit-tests.yml`    | push, PR¹      | Upstream's JS suites, plus the Tauri suite      |
+| `e2e.yml`           | push, PR¹      | Upstream's Playwright run against `packages/ui` |
+| `verify-tauri.yml`  | push, PR¹      | `typecheck` and a real Rust build               |
+| `release-tauri.yml` | `tauri-v*` tag | Builds and publishes installers                 |
+| `stale.yml`         | manual only    | Upstream's issue bot; no longer on a cron       |
+
+¹ "push" here means pushes to `main` only, not every branch — each of the
+three carries `branches: [main]` plus `paths-ignore: ['docs/**', '**.md']`, so
+a feature-branch push runs nothing, and neither does a docs-only change on
+`main` or in a PR. (This commit, being a `docs:`-only change to `FORK.md`,
+triggers none of them.)
+
+To cut a release:
+
+```bash
+# 1. Bump the local default (optional; CI takes the version from the tag)
+#    apps/tauri/src-tauri/tauri.conf.json  ->  "version": "0.2.0"
+
+# 2. Tag and push
+git tag tauri-v0.2.0
+git push origin tauri-v0.2.0
+```
+
+The workflow gates on `pnpm typecheck` and the test suites, then builds on
+three runners and attaches seven artifacts to a **draft** GitHub Release:
+`.deb`/`.rpm`/`.AppImage`, `.msi`/`.exe`, and macOS's universal `.dmg` plus the
+`.app.tar.gz` tarball `tauri-action` uploads alongside it
+(`MetaCubeXD_<version>_universal.app.tar.gz`). That tarball is expected, not a
+bug. Write the notes, then publish it.
+
+There is no auto-updater configured — `release-tauri.yml` sets
+`uploadUpdaterJson: false` and `apps/tauri` has no updater plugin — which is
+worth saying precisely because `.app.tar.gz` is the format Tauri's updater
+expects for macOS. Nothing on either end consumes it today; it is currently
+just an extra download.
+
+**A failed leg is expected sometimes, not a broken run.** `release-tauri.yml`
+sets `fail-fast: false` so the other two platforms still build and upload even
+if one fails, so a draft release carrying only some of the seven artifacts is
+normal, not a sign the whole pipeline is broken. To retry: delete the draft
+release, delete the tag both locally (`git tag -d tauri-v0.2.0-rc1`) and on the
+remote (`git push origin :tauri-v0.2.0-rc1`), fix the problem, and push a new
+tag — `rc1` → `rc2`, or drop `-rc` once it is clean.
+
+A tag containing `-rc` is marked as a prerelease, so `tauri-v0.2.0-rc1` is the
+way to exercise the pipeline without announcing anything.
+
+Tauri's WiX bundler accepts only a numeric-only pre-release identifier, and
+`-rc1` is not one, so `release-tauri.yml` sets `bundle.windows.wix.version` to
+the tag's `major.minor.patch` prefix (`0.2.0`, not `0.2.0-rc1`) before building.
+The `.msi` filename still carries the full tag. Skip that override and an `-rc`
+tag fails the entire Windows leg.
+
+**Versions are never written back into the repository.** The tag is the source
+of truth, and CI patches `tauri.conf.json` in the runner only. That is
+deliberate: release-please would have written `CHANGELOG.md` and two
+`package.json` versions, every one of which upstream rewrites on its own
+release schedule, and every one of which would then conflict on merge.
+
+**Artifacts are unsigned.** macOS shows a Gatekeeper warning — right-click →
+Open, or `xattr -d com.apple.quarantine /Applications/MetaCubeXD.app`. Windows
+shows SmartScreen — More info → Run anyway. Adding signing later is
+configuration on `tauri-action`, not a redesign.
+
+**`pnpm-workspace.yaml` sets `shellEmulator: true`.** `packages/ui`'s
+`generate:desktop` script uses a POSIX inline env-var prefix (`FOO=bar cmd`)
+that `cmd.exe` cannot parse, and `tauri.conf.json` invokes that same script as
+`beforeBuildCommand` on every platform, including the Windows runner. The
+script is upstream-owned, so the fix belongs in the workspace config rather
+than in `packages/ui`. Do not remove it.
+
+### Stale references left in upstream-owned files
+
+These are wrong for this fork but are **deliberately not edited**, because they
+live in files upstream rewrites and touching them would buy a merge conflict for
+no functional gain:
+
+- `CONTRIBUTING.md` links to `.github/workflows/release.yml`, which this fork
+  deleted, and still documents `pnpm dev:server` / `pnpm build:desktop` and lists
+  `apps/server` / `apps/desktop` as workspace members.
+- `.github/copilot-instructions.md` points at the same deleted workflow.
+- `Casks/metacubexd.rb` installs `MetaCubeXD-mac-<arch>.dmg` from
+  **upstream's** releases. It still resolves, so it silently installs upstream's
+  Electron app rather than this fork's Tauri one. This fork's macOS artifact is
+  `MetaCubeXD_<version>_universal.dmg`.
+- `README.md`'s build badge queries upstream's `release.yml`, so it has never
+  reflected this fork's CI status.
+- `packages/ui/Dockerfile` and `apps/server/Dockerfile` are built by no workflow
+  here.
+
+`release-please-config.json` is a partial exception, not a member of the list
+above: this milestone already edited it once (commit `9c0b1cab` removed the
+`apps/desktop/package.json` entry when `release.yml` was deleted, which is why
+it is one of the paths called out in [Merging upstream](#merging-upstream)).
+What it still lists, `packages/ui/package.json` under `extra-files`, is left
+in place deliberately: nothing triggers release-please today, so the entry is
+inert, but removing it fully belongs with revisiting the tag-driven model
+above, not with this milestone's CI cleanup. **Do not re-enable
+release-please** without doing that revisit.
+
+Also expect noise, not failure, from the codecov step in `unit-tests.yml`: this
+fork likely has no `CODECOV_TOKEN`, and `verbose: true` makes that loud, but
+`fail_ci_if_error: false` keeps the job green.
 
 ## Known limitations
 

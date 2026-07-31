@@ -171,10 +171,16 @@ manual-only."
 **Files:**
 
 - Modify: `apps/tauri/src-tauri/tauri.conf.json:4`
+- Modify: `apps/tauri/package.json:3`
 
-- [ ] **Step 1: Set the version**
+- [ ] **Step 1: Set the version in both fork-owned manifests**
 
-Change `"version": "1.270.6"` to `"version": "0.1.0"`.
+In `apps/tauri/src-tauri/tauri.conf.json`, change `"version": "1.270.6"` to
+`"version": "0.1.0"`.
+
+In `apps/tauri/package.json`, make the same change. It carries `1.270.6` for the
+same inherited reason, and leaving the two disagreeing is the kind of
+incoherence someone later has to stop and puzzle out.
 
 `1.270.6` is the _dashboard's_ version, inherited when the config was written.
 The shell's version has no meaningful relationship to it — the shell is at its
@@ -189,10 +195,33 @@ Run: `pnpm --filter @metacubexd/tauri build:shim && cargo check --manifest-path 
 
 Expected: `Finished` with no errors.
 
+Run:
+
+```bash
+node -e "const a=require('./apps/tauri/package.json'), b=require('./apps/tauri/src-tauri/tauri.conf.json'); console.log('package.json', a.version, '| tauri.conf.json', b.version)"
+grep '^version' apps/tauri/src-tauri/Cargo.toml
+```
+
+Expected:
+
+```
+package.json 0.1.0 | tauri.conf.json 0.1.0
+version = "0.1.0"
+```
+
+`Cargo.toml` is checked with `grep`, not `require` — Node parses a required file
+as JavaScript regardless of extension, so requiring a TOML file throws on its
+first comment line.
+
+Note this does **not** touch `packages/ui/package.json`, whose `1.270.6` is the
+dashboard's version and is what the UI reports as `appVersion`. Nothing reads
+the shell's version, so these two changes have no user-visible effect beyond
+artifact filenames.
+
 - [ ] **Step 3: Commit**
 
 ```bash
-git add apps/tauri/src-tauri/tauri.conf.json
+git add apps/tauri/src-tauri/tauri.conf.json apps/tauri/package.json
 git commit -m "chore(tauri): version the shell independently of the dashboard
 
 tauri.conf.json carried 1.270.6, the dashboard's version, which would
@@ -590,6 +619,33 @@ release schedule, and every one of which would then conflict on merge.
 Open, or `xattr -d com.apple.quarantine /Applications/MetaCubeXD.app`. Windows
 shows SmartScreen — More info → Run anyway. Adding signing later is
 configuration on `tauri-action`, not a redesign.
+
+### Stale references left in upstream-owned files
+
+These are wrong for this fork but are **deliberately not edited**, because they
+live in files upstream rewrites and touching them would buy a merge conflict for
+no functional gain:
+
+- `CONTRIBUTING.md` links to `.github/workflows/release.yml`, which this fork
+  deleted, and still documents `pnpm dev:server` / `pnpm build:desktop` and lists
+  `apps/server` / `apps/desktop` as workspace members.
+- `.github/copilot-instructions.md` points at the same deleted workflow.
+- `Casks/metacubexd.rb` installs `MetaCubeXD-mac-<arch>.dmg` from
+  **upstream's** releases. It still resolves, so it silently installs upstream's
+  Electron app rather than this fork's Tauri one. This fork's macOS artifact is
+  `MetaCubeXD_<version>_universal.dmg`.
+- `README.md`'s build badge queries upstream's `release.yml`, so it has never
+  reflected this fork's CI status.
+- `packages/ui/Dockerfile` and `apps/server/Dockerfile` are built by no workflow
+  here.
+- `release-please-config.json` still lists `packages/ui/package.json` under
+  `extra-files`. It is inert — nothing triggers release-please — but it would
+  write a version into a file upstream also rewrites. **Do not re-enable
+  release-please** without revisiting the tag-driven model.
+
+Also expect noise, not failure, from the codecov step in `unit-tests.yml`: this
+fork likely has no `CODECOV_TOKEN`, and `verbose: true` makes that loud, but
+`fail_ci_if_error: false` keeps the job green.
 ````
 
 - [ ] **Step 2: Verify**

@@ -1,0 +1,168 @@
+name: release-tauri
+
+on:
+  push:
+    tags:
+      - 'tauri-v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # A tag that fails the suite must not publish. This also derives the version
+  # once, so all three matrix legs agree on it.
+  gate:
+    runs-on: ubuntu-22.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # tauri-v0.1.0 -> 0.1.0
+      - name: Derive the version from the tag
+        id: version
+        shell: bash
+        run: echo "version=${GITHUB_REF_NAME#tauri-v}" >> "$GITHUB_OUTPUT"
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          cache: pnpm
+          node-version: lts/*
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Run unit tests
+        run: |
+          pnpm --filter @metacubexd/agent test
+          pnpm --filter @metacubexd/config-editor test
+          pnpm --filter @metacubexd/tauri test
+          pnpm --filter @metacubexd/ui test:unit
+
+  release:
+    needs: gate
+    permissions:
+      contents: write
+
+    strategy:
+      # One platform failing should not cancel the others — partial artifacts
+      # on a draft release are more useful than none, and the failure is
+      # easier to read in isolation.
+      fail-fast: false
+      matrix:
+        include:
+          - platform: ubuntu-22.04
+            args: ''
+            rustTargets: ''
+          - platform: windows-latest
+            args: ''
+            rustTargets: ''
+          # One .dmg covering Apple Silicon and Intel, so users never pick wrong.
+          - platform: macos-latest
+            args: '--target universal-apple-darwin'
+            rustTargets: 'aarch64-apple-darwin,x86_64-apple-darwin'
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          cache: pnpm
+          node-version: lts/*
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rustTargets }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/tauri/src-tauri
+          key: ${{ matrix.platform }}
+          # A live-fire retry (rc1 -> rc2) should not pay a full cold Rust
+          # build on all three legs just because one of them failed.
+          cache-on-failure: true
+
+      - name: Install Linux build dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            librsvg2-dev \
+            patchelf \
+            build-essential \
+            libdbus-1-dev
+
+      - name: Install dependencies
+        run: pnpm install
+
+      # The tag is the source of truth for the version, so artifact filenames
+      # always match the tag that produced them. Without this a tauri-v0.1.0
+      # tag would emit MetaCubeXD_0.1.0... only by coincidence of the checked-in
+      # value, and drift silently the moment the two disagree.
+      #
+      # shell: bash so this behaves identically on the Windows runner, which
+      # otherwise defaults to PowerShell and its different quoting rules.
+      #
+      # The version is passed through env rather than interpolated into the
+      # script text: git tag names may contain $, `, and ", and this job has
+      # contents: write.
+      - name: Set the bundle version from the tag
+        env:
+          VERSION: ${{ needs.gate.outputs.version }}
+        shell: bash
+        run: |
+          node -e '
+            const fs = require("node:fs")
+            const path = "apps/tauri/src-tauri/tauri.conf.json"
+            const config = JSON.parse(fs.readFileSync(path, "utf8"))
+            const version = process.env.VERSION
+            config.version = version
+            // WiX (the MSI bundler) requires the pre-release identifier to be
+            // numeric and <=65535, which a "-rc1" style tag is not, and
+            // bundle.targets is "all" so MSI always builds. Override just the
+            // MSI version with the release triplet; the artifact filename
+            // still comes from config.version above, so this is not
+            // redundant with it.
+            config.bundle ??= {}
+            config.bundle.windows ??= {}
+            config.bundle.windows.wix ??= {}
+            config.bundle.windows.wix.version = version.split("-")[0]
+            fs.writeFileSync(path, JSON.stringify(config, null, 2) + "\n")
+          '
+
+      # tauri-action calls `tauri build` directly, not the package's `build`
+      # script, so the gitignored shim.js that src-tauri embeds with
+      # include_str! would be missing. All three legs would fail identically
+      # with an error pointing at Rust rather than at the real cause.
+      - name: Generate the transport shim
+        run: pnpm --filter @metacubexd/tauri build:shim
+
+      - uses: tauri-apps/tauri-action@action-v1.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: apps/tauri
+          tagName: ${{ github.ref_name }}
+          releaseName: MetaCubeXD ${{ needs.gate.outputs.version }}
+          # Draft, so release notes can be written before anyone can download,
+          # and so a failed live-fire tag leaves nothing published.
+          releaseDraft: true
+          prerelease: ${{ contains(github.ref_name, '-rc') }}
+          # No updater is configured, so latest.json would be noise.
+          uploadUpdaterJson: false
+          args: ${{ matrix.args }}
