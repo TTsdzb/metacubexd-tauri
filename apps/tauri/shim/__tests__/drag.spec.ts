@@ -27,10 +27,18 @@ function renderTitleBar() {
   `
 }
 
-function mousedown(id: string, button = 0) {
+// A real mousedown always carries a detail (click count) of at least 1;
+// default to a single click so callers that don't care about double-click
+// behavior still exercise the realistic case.
+function mousedown(id: string, button = 0, detail = 1) {
   const target = document.getElementById(id)
   target?.dispatchEvent(
-    new MouseEvent('mousedown', { bubbles: true, cancelable: true, button }),
+    new MouseEvent('mousedown', {
+      bubbles: true,
+      cancelable: true,
+      button,
+      detail,
+    }),
   )
 }
 
@@ -82,5 +90,89 @@ describe('installDragRegions', () => {
     mousedown('bar')
 
     expect(win.startDragging).not.toHaveBeenCalled()
+  })
+
+  // A frameless window has no native double-click-to-maximize, so
+  // TitleBar.vue relies on `@dblclick="toggleMaximize()"`. But
+  // startDragging() hands the pointer to the window manager's modal move
+  // loop, which swallows the matching mouseup — the webview never sees the
+  // click, so `dblclick` never fires. The click-counter branch below is
+  // what actually restores double-click-to-maximize.
+  it('maximizes on double click instead of dragging', () => {
+    const win = fakeWindow()
+    installDragRegions(document, () => win)
+
+    mousedown('bar', 0, 2)
+
+    expect(win.toggleMaximize).toHaveBeenCalledTimes(1)
+    expect(win.startDragging).not.toHaveBeenCalled()
+  })
+
+  it('drags (not maximizes) on a single click', () => {
+    const win = fakeWindow()
+    installDragRegions(document, () => win)
+
+    mousedown('bar', 0, 1)
+
+    expect(win.startDragging).toHaveBeenCalledTimes(1)
+    expect(win.toggleMaximize).not.toHaveBeenCalled()
+  })
+
+  it('does nothing on a third click of a triple click', () => {
+    const win = fakeWindow()
+    installDragRegions(document, () => win)
+
+    mousedown('bar', 0, 3)
+
+    expect(win.startDragging).not.toHaveBeenCalled()
+    expect(win.toggleMaximize).not.toHaveBeenCalled()
+  })
+
+  // jsdom drops `-webkit-app-region` from the CSSOM the same way WebKitGTK
+  // does, so there is no way to make `el.style.getPropertyValue(...)` return
+  // a real value here. Spying on it is the only way to exercise the CSSOM
+  // branch at all — do not "fix" this into a real assignment, it would
+  // silently stop testing anything.
+  it('recognizes a drag region applied only through the CSSOM', () => {
+    const win = fakeWindow()
+    const bar = document.getElementById('bar')!
+    bar.removeAttribute('style')
+    vi.spyOn(bar.style, 'getPropertyValue').mockReturnValue('drag')
+    installDragRegions(document, () => win)
+
+    mousedown('bar')
+
+    expect(win.startDragging).toHaveBeenCalledTimes(1)
+  })
+
+  it('recognizes a no-drag region applied only through the CSSOM', () => {
+    const win = fakeWindow()
+    const controls = document.getElementById('controls')!
+    controls.removeAttribute('style')
+    vi.spyOn(controls.style, 'getPropertyValue').mockReturnValue('no-drag')
+    installDragRegions(document, () => win)
+
+    mousedown('close')
+
+    expect(win.startDragging).not.toHaveBeenCalled()
+  })
+
+  it('logs a rejected startDragging instead of swallowing it', async () => {
+    const error = new Error('missing core:window:allow-start-dragging')
+    const win = fakeWindow()
+    win.startDragging.mockRejectedValueOnce(error)
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    installDragRegions(document, () => win)
+
+    mousedown('bar')
+    await vi.waitFor(() => {
+      expect(consoleError).toHaveBeenCalled()
+    })
+
+    expect(consoleError).toHaveBeenCalledWith(
+      expect.stringContaining('startDragging'),
+      error,
+    )
+    consoleError.mockRestore()
   })
 })
