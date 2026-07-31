@@ -195,9 +195,23 @@ Run: `pnpm --filter @metacubexd/tauri build:shim && cargo check --manifest-path 
 
 Expected: `Finished` with no errors.
 
-Run: `node -e "const a=require('./apps/tauri/package.json'), b=require('./apps/tauri/src-tauri/tauri.conf.json'), c=require('./apps/tauri/src-tauri/Cargo.toml')?0:0; console.log('package.json', a.version, '| tauri.conf.json', b.version)"`
+Run:
 
-Expected: `package.json 0.1.0 | tauri.conf.json 0.1.0`
+```bash
+node -e "const a=require('./apps/tauri/package.json'), b=require('./apps/tauri/src-tauri/tauri.conf.json'); console.log('package.json', a.version, '| tauri.conf.json', b.version)"
+grep '^version' apps/tauri/src-tauri/Cargo.toml
+```
+
+Expected:
+
+```
+package.json 0.1.0 | tauri.conf.json 0.1.0
+version = "0.1.0"
+```
+
+`Cargo.toml` is checked with `grep`, not `require` — Node parses a required file
+as JavaScript regardless of extension, so requiring a TOML file throws on its
+first comment line.
 
 Note this does **not** touch `packages/ui/package.json`, whose `1.270.6` is the
 dashboard's version and is what the UI reports as `appVersion`. Nothing reads
