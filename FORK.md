@@ -76,7 +76,7 @@ in new paths. Regenerate the lockfile with pnpm rather than resolving it by
 hand.
 
 After a merge that touched `packages/ui`, run `pnpm --filter @metacubexd/tauri
-test` — 6 spec files, 74 tests. Those specs encode what the shim assumes about
+test` — 6 spec files, 84 tests. Those specs encode what the shim assumes about
 the dashboard — the `window.metacubexd` bridge shape, `event.data` carrying JSON
 text, the `-webkit-app-region` title bar — so they are what catches an upstream
 change that breaks the shell.
