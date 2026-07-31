@@ -739,7 +739,7 @@ Create `apps/tauri/shim/websocket.ts`:
 ```ts
 import PluginWebSocket from '@tauri-apps/plugin-websocket'
 
-/** The frame shape `tauri-plugin-websocket` pushes up its channel. */
+/** The *tagged* frame shape `tauri-plugin-websocket` pushes up its channel. */
 export type Message =
   | { type: 'Text'; data: string }
   | { type: 'Binary'; data: number[] }
@@ -747,9 +747,26 @@ export type Message =
   | { type: 'Pong'; data: number[] }
   | { type: 'Close'; data: { code: number; reason: string } | null }
 
+/**
+ * Everything the plugin can actually deliver.
+ *
+ * Only *successful* frames get an envelope. The Rust read loop converts a read
+ * error with `serde_json::to_value(Error::from(e))`, and `Error`'s `Serialize`
+ * impl is `serialize_str`, so an error arrives as a bare JSON string. A
+ * `Message::Frame(_)` maps to `null`.
+ *
+ * This is not an edge case: Mihomo dies by process exit with no close
+ * handshake, so tokio-tungstenite yields `Err(...)` rather than
+ * `Ok(Message::Close(..))`. The untagged payload is the PRIMARY termination
+ * path, and the plugin's own TypeScript types do not describe it — which is
+ * why `#receive` must treat anything untagged as an abnormal close (1006)
+ * rather than switching on `type` alone.
+ */
+export type Incoming = Message | string | null
+
 /** The slice of the plugin's socket this adapter drives. */
 export interface PluginSocket {
-  addListener: (cb: (msg: Message) => void) => () => void
+  addListener: (cb: (msg: Incoming) => void) => () => void
   send: (message: string) => Promise<void>
   disconnect: () => Promise<void>
 }
@@ -834,8 +851,20 @@ export function createWebSocketClass(
       this.onopen?.(new Event('open'))
     }
 
-    #receive(message: Message): void {
+    #receive(message: Incoming): void {
       if (this.readyState !== OPEN) return
+
+      // Untagged payload: the plugin's error channel (a bare string) or a raw
+      // Frame (null). This is how a Mihomo restart actually reaches us, since
+      // the kernel exits without a close handshake — so report it as an
+      // abnormal close and let the UI's reconnect-with-backoff take over.
+      // Falling through the switch instead would leave readyState OPEN and
+      // freeze every stream until the user reloads.
+      if (typeof message !== 'object' || message === null) {
+        this.onerror?.(new Event('error'))
+        this.#finish(1006, message === null ? '' : String(message))
+        return
+      }
 
       switch (message.type) {
         case 'Text':
@@ -856,6 +885,10 @@ export function createWebSocketClass(
         case 'Ping':
         case 'Pong':
           break
+        default:
+          // An unrecognized tag must not silently freeze the socket either.
+          this.onerror?.(new Event('error'))
+          this.#finish(1006, '')
       }
     }
 
