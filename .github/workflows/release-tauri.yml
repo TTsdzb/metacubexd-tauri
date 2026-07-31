@@ -45,6 +45,7 @@ jobs:
       - name: Run unit tests
         run: |
           pnpm --filter @metacubexd/agent test
+          pnpm --filter @metacubexd/config-editor test
           pnpm --filter @metacubexd/tauri test
           pnpm --filter @metacubexd/ui test:unit
 
@@ -91,6 +92,9 @@ jobs:
         with:
           workspaces: apps/tauri/src-tauri
           key: ${{ matrix.platform }}
+          # A live-fire retry (rc1 -> rc2) should not pay a full cold Rust
+          # build on all three legs just because one of them failed.
+          cache-on-failure: true
 
       - name: Install Linux build dependencies
         if: matrix.platform == 'ubuntu-22.04'
@@ -100,7 +104,8 @@ jobs:
             libwebkit2gtk-4.1-dev \
             librsvg2-dev \
             patchelf \
-            build-essential
+            build-essential \
+            libdbus-1-dev
 
       - name: Install dependencies
         run: pnpm install
@@ -112,16 +117,33 @@ jobs:
       #
       # shell: bash so this behaves identically on the Windows runner, which
       # otherwise defaults to PowerShell and its different quoting rules.
+      #
+      # The version is passed through env rather than interpolated into the
+      # script text: git tag names may contain $, `, and ", and this job has
+      # contents: write.
       - name: Set the bundle version from the tag
+        env:
+          VERSION: ${{ needs.gate.outputs.version }}
         shell: bash
         run: |
           node -e '
             const fs = require("node:fs")
             const path = "apps/tauri/src-tauri/tauri.conf.json"
             const config = JSON.parse(fs.readFileSync(path, "utf8"))
-            config.version = process.argv[1]
+            const version = process.env.VERSION
+            config.version = version
+            // WiX (the MSI bundler) requires the pre-release identifier to be
+            // numeric and <=65535, which a "-rc1" style tag is not, and
+            // bundle.targets is "all" so MSI always builds. Override just the
+            // MSI version with the release triplet; the artifact filename
+            // still comes from config.version above, so this is not
+            // redundant with it.
+            config.bundle ??= {}
+            config.bundle.windows ??= {}
+            config.bundle.windows.wix ??= {}
+            config.bundle.windows.wix.version = version.split("-")[0]
             fs.writeFileSync(path, JSON.stringify(config, null, 2) + "\n")
-          ' "${{ needs.gate.outputs.version }}"
+          '
 
       # tauri-action calls `tauri build` directly, not the package's `build`
       # script, so the gitignored shim.js that src-tauri embeds with

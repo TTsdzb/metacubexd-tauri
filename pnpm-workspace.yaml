@@ -2,6 +2,13 @@ packages:
   - 'packages/*'
   - 'apps/tauri'
 
+# packages/ui's generate:desktop script (upstream-owned, so fixed here rather
+# than there) is `NUXT_APP_BASE_URL=./ MCXD_DISABLE_PWA=true nuxt generate` — a
+# POSIX inline env-var prefix that cmd.exe cannot parse. Tauri runs
+# beforeBuildCommand through cmd /C on Windows, so without this the Windows
+# release leg fails before it ever reaches Rust.
+shellEmulator: true
+
 # Single default catalog: every package references deps as "catalog:".
 # Versions are transcribed verbatim from the pre-migration root package.json
 # (dependencies + devDependencies). ZERO version bumps in this migration.
