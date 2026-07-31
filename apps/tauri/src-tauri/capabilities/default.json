@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Dashboard shell: native HTTP and WebSocket to any user-specified backend, plus custom-title-bar window controls.",
+  "description": "Dashboard shell: native HTTP and WebSocket to any user-specified backend, plus custom-title-bar window controls. The `:*` in the http scope is load-bearing: these are URLPattern constructor strings, not globs, and a pattern with no port component parses to port \"\", which matches only a URL whose port is the scheme default. `http://*` would therefore reject every Mihomo address the user actually types (http://127.0.0.1:9090, http://192.168.1.5:9090) while still allowing the GitHub release check over implicit 443 — do not 'tidy' the `:*` away.",
   "windows": ["main"],
   "permissions": [
     "core:default",
@@ -12,7 +12,7 @@
     "core:window:allow-start-dragging",
     {
       "identifier": "http:default",
-      "allow": [{ "url": "http://*" }, { "url": "https://*" }]
+      "allow": [{ "url": "http://*:*" }, { "url": "https://*:*" }]
     },
     "websocket:default"
   ]

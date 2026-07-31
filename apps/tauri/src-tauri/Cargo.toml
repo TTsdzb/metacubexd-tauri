@@ -1,10 +1,13 @@
 [package]
 name = "app"
 version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
-license = ""
-repository = ""
+# These are not cosmetic: with `bundle.targets: "all"`, the deb/rpm/AppImage
+# bundlers ship `description` as the package description and `authors` as the
+# maintainer field.
+description = "MetaCubeXD — dashboard for the Mihomo proxy kernel"
+authors = ["TTsdzb <ttsdzb@outlook.com>"]
+license = "MIT"
+repository = "https://github.com/TTsdzb/metacubexd"
 edition = "2021"
 rust-version = "1.77.2"
 

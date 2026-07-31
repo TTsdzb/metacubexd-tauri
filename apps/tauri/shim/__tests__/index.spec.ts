@@ -103,6 +103,35 @@ describe('install', () => {
     expect(receiver).toBe(global)
   })
 
+  it('keeps a same-origin socket on the captured webview WebSocket', () => {
+    const global = target('linux', true)
+    const OriginalWebSocket = global.WebSocket as typeof globalThis.WebSocket
+
+    install(global)
+    // jsdom serves these specs from http://localhost:3000/, so this is Vite's
+    // HMR socket. Routing it through the Tauri transport would break hot
+    // reload in `pnpm dev:tauri`: Vite's client calls addEventListener, which
+    // TauriWebSocket deliberately does not implement.
+    const socket = new (global.WebSocket as typeof globalThis.WebSocket)(
+      'ws://localhost:3000/_nuxt/hmr',
+      'vite-hmr',
+    )
+
+    expect(socket).toBeInstanceOf(OriginalWebSocket)
+  })
+
+  it('routes a cross-origin socket away from the webview WebSocket', () => {
+    const global = target('linux', true)
+    const OriginalWebSocket = global.WebSocket as typeof globalThis.WebSocket
+
+    install(global)
+    const socket = new (global.WebSocket as typeof globalThis.WebSocket)(
+      'ws://192.168.1.5:9090/traffic',
+    )
+
+    expect(socket).not.toBeInstanceOf(OriginalWebSocket)
+  })
+
   it('never touches Tauri bootstrap globals at install time', () => {
     const global = target('linux', true)
 

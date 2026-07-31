@@ -1,11 +1,11 @@
 import { createBridge } from './bridge'
 import { installDragRegions } from './drag'
 import { createFetch } from './fetch'
-import { createWebSocketClass } from './websocket'
+import { createWebSocket } from './websocket'
 
 export interface ShimTarget {
   fetch: typeof globalThis.fetch
-  WebSocket: unknown
+  WebSocket: typeof globalThis.WebSocket
   document: Document
   metacubexd?: unknown
   /** Both injected by src-tauri/src/shim.rs ahead of this bundle. */
@@ -26,8 +26,10 @@ export function install(target: ShimTarget): void {
   if (target.__MCXD_SHIM_INSTALLED__) return
   target.__MCXD_SHIM_INSTALLED__ = true
 
+  // Both transports keep the captured original for same-origin traffic, so
+  // the webview's own implementations must be read before they are replaced.
   target.fetch = createFetch(target.fetch.bind(target))
-  target.WebSocket = createWebSocketClass()
+  target.WebSocket = createWebSocket(target.WebSocket)
 
   // Electron reports linux/darwin/win32; shim.rs maps Rust's OS names onto
   // those and passes android/ios through. isDesktop comes from Rust's

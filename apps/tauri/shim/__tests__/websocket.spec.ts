@@ -1,6 +1,7 @@
 import type { Incoming, PluginSocket } from '../websocket'
+import PluginWebSocket from '@tauri-apps/plugin-websocket'
 import { describe, expect, it, vi } from 'vitest'
-import { createWebSocketClass } from '../websocket'
+import { createWebSocket, createWebSocketClass } from '../websocket'
 
 vi.mock('@tauri-apps/plugin-websocket', () => ({
   default: { connect: vi.fn() },
@@ -260,5 +261,107 @@ describe('createWebSocketClass', () => {
 
     ws.send('later')
     expect(sent).toHaveBeenCalledWith('later')
+  })
+})
+
+// jsdom serves these specs from http://localhost:3000/ (vitest.config.ts),
+// standing in for the Nuxt dev server — so ws://localhost:3000/... is the
+// same-origin case and anything else is cross-origin.
+describe('createWebSocket', () => {
+  // Stand-ins for the two constructors the router picks between, distinct
+  // classes so `instanceof` says which one ran.
+  class WebviewWebSocket {
+    static readonly CONNECTING = 0
+    static readonly OPEN = 1
+    static readonly CLOSING = 2
+    static readonly CLOSED = 3
+
+    readonly url: string
+    readonly protocols: string | string[] | undefined
+
+    constructor(url: string | URL, protocols?: string | string[]) {
+      this.url = String(url)
+      this.protocols = protocols
+    }
+  }
+
+  class NativeWebSocket {
+    readonly url: string
+
+    constructor(url: string | URL, _protocols?: string | string[]) {
+      this.url = String(url)
+    }
+  }
+
+  const route = () =>
+    createWebSocket(
+      WebviewWebSocket as unknown as typeof globalThis.WebSocket,
+      NativeWebSocket,
+    )
+
+  it("keeps Vite's HMR socket on the webview implementation, subprotocol included", () => {
+    const WebSocket = route()
+
+    const socket = new WebSocket('ws://localhost:3000/_nuxt/hmr', 'vite-hmr')
+
+    // TauriWebSocket implements no addEventListener and cannot negotiate a
+    // subprotocol, so routing this natively would silently kill hot reload.
+    expect(socket).toBeInstanceOf(WebviewWebSocket)
+    expect((socket as unknown as WebviewWebSocket).protocols).toBe('vite-hmr')
+  })
+
+  it('routes a cross-origin socket through the native transport', () => {
+    const WebSocket = route()
+
+    const socket = new WebSocket('ws://192.168.1.5:9090/traffic')
+
+    expect(socket).toBeInstanceOf(NativeWebSocket)
+    expect((socket as unknown as NativeWebSocket).url).toBe(
+      'ws://192.168.1.5:9090/traffic',
+    )
+  })
+
+  it('routes a same-machine backend on another port natively', () => {
+    const WebSocket = route()
+
+    // The canonical local Mihomo: same host as the dev origin, different
+    // port. A host-only comparison would wrongly keep it on the webview.
+    expect(new WebSocket('ws://localhost:9090/traffic')).toBeInstanceOf(
+      NativeWebSocket,
+    )
+  })
+
+  it('accepts a URL instance', () => {
+    const WebSocket = route()
+
+    expect(
+      new WebSocket(new URL('ws://192.168.1.5:9090/traffic')),
+    ).toBeInstanceOf(NativeWebSocket)
+  })
+
+  it('forwards the readyState constants from the webview implementation', () => {
+    const WebSocket = route()
+
+    // useWebSocket.ts compares readyState against WebSocket.OPEN; the proxy
+    // has to keep the statics reachable.
+    expect(WebSocket.CONNECTING).toBe(0)
+    expect(WebSocket.OPEN).toBe(1)
+    expect(WebSocket.CLOSING).toBe(2)
+    expect(WebSocket.CLOSED).toBe(3)
+  })
+
+  it('defaults its native transport to the plugin-backed class', async () => {
+    const { socket: pluginSocket } = fakeSocket()
+    const connect = vi.mocked(PluginWebSocket.connect)
+    connect.mockResolvedValue(pluginSocket as never)
+    const WebSocket = createWebSocket(
+      WebviewWebSocket as unknown as typeof globalThis.WebSocket,
+    )
+
+    const socket = new WebSocket('ws://192.168.1.5:9090/traffic')
+    await settle()
+
+    expect(socket).not.toBeInstanceOf(WebviewWebSocket)
+    expect(connect).toHaveBeenCalledWith('ws://192.168.1.5:9090/traffic')
   })
 })

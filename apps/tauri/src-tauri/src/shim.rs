@@ -35,8 +35,15 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
     // webview is what stops the dashboard drawing a desktop title bar and
     // window controls on Android, without the JS side guessing from a platform
     // string.
+    //
+    // The leading "use strict" is this script's own: esbuild emits one at the
+    // top of the bundle, but prepending the prelude pushes it out of directive
+    // prologue position, where it is an ordinary string expression and does
+    // nothing. The prelude must still come first — install() reads both
+    // globals when the bundle executes — so the directive is re-stated here
+    // rather than the two being reordered.
     let script = format!(
-        "window.__MCXD_PLATFORM__ = {:?};\nwindow.__MCXD_IS_DESKTOP__ = {};\n{}",
+        "\"use strict\";\nwindow.__MCXD_PLATFORM__ = {:?};\nwindow.__MCXD_IS_DESKTOP__ = {};\n{}",
         platform(),
         cfg!(desktop),
         SHIM

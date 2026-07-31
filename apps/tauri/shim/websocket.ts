@@ -1,4 +1,5 @@
 import PluginWebSocket from '@tauri-apps/plugin-websocket'
+import { needsNativeTransport } from './origin'
 
 /** The frame shape `tauri-plugin-websocket` pushes up its channel on success. */
 export type Message =
@@ -85,6 +86,12 @@ export function createWebSocketClass(
     #closing = false
     #unlisten: (() => void) | null = null
 
+    // Subprotocols are dropped: the plugin's `connect(url, config)` has no
+    // subprotocol parameter, so there is nothing to forward them to. Mihomo's
+    // Clash API does not negotiate any, and the one consumer that does —
+    // Vite's HMR client, which asks for "vite-hmr" — never reaches this class
+    // because `createWebSocket` below keeps same-origin sockets on the
+    // webview's own implementation.
     constructor(url: string | URL, _protocols?: string | string[]) {
       this.url = String(url)
       // #open() only throws if a consumer handler (onopen/onerror/onclose)
@@ -246,4 +253,49 @@ export function createWebSocketClass(
         })
     }
   }
+}
+
+/** Anything `new`-able the way `WebSocket` is. */
+export type WebSocketCtor = new (
+  url: string | URL,
+  protocols?: string | string[],
+) => object
+
+/**
+ * Build the replacement for `globalThis.WebSocket`.
+ *
+ * The mirror image of `createFetch`: cross-origin sockets go through
+ * `tauri-plugin-websocket`, everything same-origin keeps the webview's own
+ * implementation. Routing *every* socket natively would break `pnpm dev:tauri`
+ * — the page is served from the Vite dev server, whose HMR client constructs
+ * `new WebSocket(url, 'vite-hmr')` and then calls `addEventListener`, which
+ * `TauriWebSocket` deliberately does not implement. Hot reload would silently
+ * never connect.
+ *
+ * A `Proxy` rather than a wrapper function because `WebSocket` is used as a
+ * constructor and read for its `CONNECTING`/`OPEN`/`CLOSING`/`CLOSED` statics;
+ * the proxy forwards every non-construct operation to the real global for
+ * free, so only the routing decision is ours.
+ *
+ * One fidelity gap, accepted: a natively routed socket is not
+ * `instanceof WebSocket`, since it is a `TauriWebSocket`. `useWebSocket.ts`,
+ * the only consumer, never tests for that.
+ */
+export function createWebSocket(
+  webviewWebSocket: typeof globalThis.WebSocket,
+  // PascalCase because it is a constructor, not an instance — the same
+  // reason `new webviewWebSocket()` never appears below.
+  NativeWebSocket: WebSocketCtor = createWebSocketClass(),
+): typeof globalThis.WebSocket {
+  return new Proxy(webviewWebSocket, {
+    construct(target, args, newTarget) {
+      const [url, protocols] = args as [string | URL, (string | string[])?]
+
+      if (needsNativeTransport(url)) return new NativeWebSocket(url, protocols)
+
+      // Reflect.construct with the original argument list, so subprotocols
+      // (and anything a future spec adds) reach the platform untouched.
+      return Reflect.construct(target, args, newTarget)
+    },
+  })
 }
