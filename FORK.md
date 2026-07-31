@@ -139,10 +139,35 @@ Consequences, all good ones:
   workaround existed only because `linuxdeploy` ships a binutils `strip` too old
   for the `.relr.dyn` sections in current system libraries — no AppImage, no
   `linuxdeploy`, no workaround.
-- Linux users on distros without `.deb`/`.rpm` have no prebuilt artifact. The
-  binary at `target/release/app` is self-contained apart from system WebKitGTK,
-  so `--no-bundle` plus `tauri-action`'s `uploadPlainBinary` would cover them if
-  that ever matters.
+- Linux users on distros without `.deb`/`.rpm` are covered by the plain binary
+  instead — see below.
+
+### Plain binaries ship alongside the installers
+
+`release-tauri.yml` sets `uploadPlainBinary: true`, so each release also carries
+the unpackaged executable: `app_linux_x86_64`, `app_windows_x86_64.exe`,
+`app_darwin_universal`. `tauri-action` injects the platform into the name for
+plain binaries specifically, so the three do not collide.
+
+The Linux one is the point — it is what replaces the AppImage for distros with
+no `.deb`/`.rpm`, and it is self-contained apart from the system WebKitGTK the
+`.deb` would have depended on anyway.
+
+The other two come along because the flag is all-or-nothing across platforms,
+and both are worse than the installers next to them:
+
+- **Windows.** It runs only if the WebView2 runtime is already present —
+  preinstalled on Windows 11, usually but not always on Windows 10. The NSIS
+  and MSI installers bootstrap WebView2 when it is missing; a bare `.exe`
+  cannot. It also has no Start Menu entry and no uninstaller.
+- **macOS.** A raw Mach-O has no `Info.plist` and no bundle identity, so the
+  icon, menu bar, and window activation all misbehave, and Gatekeeper treats a
+  loose binary worse than a `.app`. The `.app.tar.gz` is already the portable
+  macOS form.
+
+Neither is harmful — nobody reaches for a raw Mach-O with a `.dmg` beside it —
+but if they ever become clutter, delete them after upload rather than turning
+the flag off, since that would take the Linux binary with them.
 
 Two adjacent CLI flags, since they are easy to confuse:
 
@@ -204,10 +229,11 @@ git push origin tauri-v0.2.0
 ```
 
 The workflow gates on `pnpm typecheck` and the test suites, then builds on
-three runners and attaches six artifacts to a **draft** GitHub Release:
+three runners and attaches eight artifacts to a **draft** GitHub Release:
 `.deb`/`.rpm`, `.msi`/`.exe`, and macOS's universal `.dmg` plus the
 `.app.tar.gz` tarball `tauri-action` uploads alongside it
-(`MetaCubeXD_<version>_universal.app.tar.gz`). That tarball is expected, not a
+(`MetaCubeXD_<version>_universal.app.tar.gz`), plus the three plain binaries
+described under [Platform support](#platform-support). That tarball is expected, not a
 bug. Write the notes, then publish it.
 
 There is no auto-updater configured — `release-tauri.yml` sets
@@ -218,7 +244,7 @@ just an extra download.
 
 **A failed leg is expected sometimes, not a broken run.** `release-tauri.yml`
 sets `fail-fast: false` so the other two platforms still build and upload even
-if one fails, so a draft release carrying only some of the six artifacts is
+if one fails, so a draft release carrying only some of the eight artifacts is
 normal, not a sign the whole pipeline is broken. To retry: delete the draft
 release, delete the tag both locally (`git tag -d tauri-v0.2.0-rc1`) and on the
 remote (`git push origin :tauri-v0.2.0-rc1`), fix the problem, and push a new

@@ -165,4 +165,13 @@ jobs:
           prerelease: ${{ contains(github.ref_name, '-rc') }}
           # No updater is configured, so latest.json would be noise.
           uploadUpdaterJson: false
+          # Ships the unpackaged executable alongside the installers. This is
+          # what covers Linux distros with no .deb/.rpm now that the AppImage
+          # target is gone — the binary is self-contained apart from the system
+          # WebKitGTK. The flag is all-or-nothing across platforms, so Windows
+          # and macOS get one too; see FORK.md for why those two are less
+          # useful. Names do not collide: tauri-action injects the platform for
+          # plain binaries (app_linux_x86_64, app_windows_x86_64.exe,
+          # app_darwin_universal).
+          uploadPlainBinary: true
           args: ${{ matrix.args }}
