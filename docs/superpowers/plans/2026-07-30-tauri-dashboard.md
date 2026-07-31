@@ -389,9 +389,19 @@ import { createFetch } from '../fetch'
 // has to satisfy the import.
 vi.mock('@tauri-apps/plugin-http', () => ({ fetch: vi.fn() }))
 
+// The parameters are declared, and unused, so vitest infers a two-argument
+// signature. With a zero-argument implementation `Mock['calls']` types as
+// `[][]`, and the `calls[0]?.[0]` assertion below then fails to compile with
+// TS2493 — a tuple-arity error no strictness flag controls.
 function transports() {
-  const webview = vi.fn(async () => new Response('webview'))
-  const native = vi.fn(async () => new Response('native'))
+  const webview = vi.fn(
+    async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      new Response('webview'),
+  )
+  const native = vi.fn(
+    async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      new Response('native'),
+  )
   return { webview, native, patched: createFetch(webview, native) }
 }
 
@@ -493,6 +503,13 @@ export function createFetch(
 Run: `pnpm --filter @metacubexd/tauri exec vitest run shim/__tests__/fetch.spec.ts`
 
 Expected: PASS — 5 passed.
+
+Then typecheck, because vitest transpiles without checking types and this spec
+indexes into `Mock['calls']`:
+
+Run: `pnpm --filter @metacubexd/tauri typecheck`
+
+Expected: no output, exit 0.
 
 - [ ] **Step 5: Commit**
 
