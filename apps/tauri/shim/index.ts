@@ -3,7 +3,7 @@ import { installDragRegions } from './drag'
 import { createFetch } from './fetch'
 import { createWebSocketClass } from './websocket'
 
-interface ShimTarget {
+export interface ShimTarget {
   fetch: typeof globalThis.fetch
   WebSocket: unknown
   document: Document
@@ -38,5 +38,12 @@ export function install(target: ShimTarget): void {
     target.__MCXD_IS_DESKTOP__ ?? true,
   )
 
-  installDragRegions(target.document)
+  // The one DOM-touching, purely cosmetic wiring: isolate it so a throw here
+  // (unlike the transports above, which are load-bearing) degrades to a
+  // missing title-bar drag instead of leaving the rest of install() unrun.
+  try {
+    installDragRegions(target.document)
+  } catch (error) {
+    console.error('metacubexd shim: installDragRegions failed', error)
+  }
 }
