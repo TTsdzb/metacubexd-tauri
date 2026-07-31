@@ -6,9 +6,19 @@ import { createFetch } from '../fetch'
 // has to satisfy the import.
 vi.mock('@tauri-apps/plugin-http', () => ({ fetch: vi.fn() }))
 
+// The parameters are declared, even though unused, because a zero-argument
+// mock implementation types `Mock['calls']` as `[][]`, which breaks the
+// `calls[0]?.[0]` assertion below at compile time. Underscore-prefixed
+// parameters are exempt from `noUnusedParameters`.
 function transports() {
-  const webview = vi.fn(async () => new Response('webview'))
-  const native = vi.fn(async () => new Response('native'))
+  const webview = vi.fn(
+    async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      new Response('webview'),
+  )
+  const native = vi.fn(
+    async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      new Response('native'),
+  )
   return { webview, native, patched: createFetch(webview, native) }
 }
 
