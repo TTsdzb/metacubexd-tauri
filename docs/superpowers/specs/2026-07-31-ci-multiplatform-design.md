@@ -38,22 +38,34 @@ Follows the Tauri shell, which is merged and smoke-tested
 
 ## Workflows
 
-### `verify.yml` — push to `main`, and pull requests
+Two, split by ownership so they do not duplicate each other's work.
+
+### `unit-tests.yml` — upstream's, minimally edited
+
+Already runs on push and pull requests, already runs the JS suites and uploads
+coverage. It gains `pnpm --filter @metacubexd/tauri test` and loses the two
+`--filter` lines that silently no-op. Nothing else changes, so upstream's
+improvements to it keep merging.
+
+### `verify-tauri.yml` — new, fork-owned
+
+Deliberately scoped to what upstream's workflow cannot cover, so the two never
+run the same thing twice. On push to `main` and on pull requests:
 
 1. `pnpm install`
-2. `pnpm typecheck` (all four workspace members)
-3. `pnpm --filter @metacubexd/tauri test`, plus the agent and config-editor suites
-4. **A Linux Tauri build.**
+2. `pnpm typecheck` — all four workspace members; `unit-tests.yml` never
+   typechecks
+3. **A Linux Tauri build**
 
-Step 4 is the one that earns its keep. The test suites never compile Rust, so
+Step 3 is the one that earns its keep. No test suite anywhere compiles Rust, so
 without it a broken `capabilities/default.json`, a bad `include_str!`, or a
 Cargo dependency that stops resolving surfaces only when you cut a release.
 
 ### `release-tauri.yml` — `tauri-v*` tags
 
 1. Derive the version from the tag: `tauri-v0.1.0` → `0.1.0`.
-2. Run the same verification as `verify.yml` in a gate job. A tag that fails
-   the suite must not publish.
+2. Run a gate job first — the JS suites, `typecheck`, and a Linux build. A tag
+   that fails must not publish.
 3. Matrix-build with `tauri-apps/tauri-action`, which builds and uploads to a
    GitHub Release on this repo.
 
@@ -109,12 +121,12 @@ implicitly and CI does not.
 
 ## Inherited workflows
 
-| File             | Disposition                                                                                |
-| ---------------- | ------------------------------------------------------------------------------------------ |
-| `release.yml`    | Deleted. Superseded by `release-tauri.yml`.                                                |
-| `unit-tests.yml` | Fixed: drop the two `--filter` lines that silently no-op, add the Tauri suite.             |
-| `e2e.yml`        | Untouched. It still tests `packages/ui` and should keep receiving upstream's improvements. |
-| `stale.yml`      | Trigger narrowed to `workflow_dispatch`. It manages upstream's issue tracker.              |
+| File             | Disposition                                                                                                              |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `release.yml`    | Deleted. Superseded by `release-tauri.yml`.                                                                              |
+| `unit-tests.yml` | Fixed: drop the two `--filter` lines that silently no-op, add the Tauri suite. Coverage upload and structure left alone. |
+| `e2e.yml`        | Untouched. It still tests `packages/ui` and should keep receiving upstream's improvements.                               |
+| `stale.yml`      | Trigger narrowed to `workflow_dispatch`. It manages upstream's issue tracker.                                            |
 
 `release-please-config.json` loses its `apps/desktop/package.json` entry.
 release-please itself stays unrun, since `release.yml` was its only trigger.
