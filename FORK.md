@@ -151,6 +151,54 @@ Also not done: tray icon, launch-at-login (both desktop-only).
 
 ## Known limitations
 
+### Closing the window orphans the Nuxt dev server
+
+`tauri dev` starts `nuxt dev` as its `beforeDevCommand`, but closing the app
+window does not stop it. The next `pnpm dev:tauri` then dies with:
+
+```
+ERROR  Another Nuxt dev is already running (PID …).
+```
+
+Stop the orphan and relaunch:
+
+```bash
+pkill -f "nuxt.mjs dev"
+```
+
+Ctrl-C in the terminal running `pnpm dev:tauri` tears both down properly; only
+closing the window from its own title bar leaves the stray behind.
+
+### Title-bar dragging depends on a Vue implementation detail
+
+`packages/ui/components/TitleBar.vue` marks its strip `-webkit-app-region:
+drag`, which is an Electron/Chromium property WebKitGTK does not implement, so
+the shim has to emulate it. Reading that marker is more delicate than it looks,
+and all three obvious routes fail in the real window:
+
+- `getAttribute('style')` is `null` — Vue's compiler turns a static `style="…"`
+  into a style _object_ prop and `setStyle` applies it through the CSSOM,
+  never calling `setAttribute`;
+- `style.getPropertyValue('-webkit-app-region')` and `getComputedStyle(...)`
+  are both `''` — the engine drops the declaration as unrecognized.
+
+What survives is an expando: `setStyle` asks `autoPrefix` for a supported
+spelling, gets none, and falls back to `style['-webkit-app-region'] = 'drag'`,
+which lands as an ordinary JS property on the declaration object. `shim/drag.ts`
+reads all three sources, and that third one is the one that fires today.
+
+The coupling to watch: **a Vue release that switched to `setProperty()` for
+unsupported properties would break dragging silently.** The unit tests cannot
+catch it — they exercise a DOM the test fixture builds, not one Vue rendered.
+Re-check the title bar by hand after a major Vue upgrade.
+
+Related: double-click-to-maximize is arbitrated between the shim and
+`TitleBar.vue`'s own `@dblclick`. Whether the platform delivers a `dblclick`
+after `startDragging()` differs — GTK does, the Windows modal move loop does
+not — so the shim handles the maximize itself and swallows the following
+`dblclick` in the capture phase. Without that, GTK toggled twice and the window
+maximized and instantly restored.
+
 ### WebSocket connections leak on reload
 
 Reloading the window orphans its four Clash API sockets on the Rust side.
