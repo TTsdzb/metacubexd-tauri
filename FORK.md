@@ -86,6 +86,13 @@ change that breaks the shell.
 Linux is what is built and smoke-tested today. `pnpm build:tauri` produces a
 `.deb` and an `.rpm` (~7.8 MB each) with no special setup.
 
+CI's Linux runner is pinned to `ubuntu-22.04` rather than `ubuntu-latest`, and
+deliberately so: it sets the glibc floor for the resulting `.deb`/`.rpm`/
+AppImage, and its binutils `strip` is old enough that the AppImage step builds
+without the `NO_STRIP` workaround below. GitHub begins deprecating
+`ubuntu-22.04` runners on 2026-09-17; migrating off it needs both of those
+reasons re-checked against the newer image, not a blind version bump.
+
 ### AppImage needs `NO_STRIP=true` on a rolling-release host
 
 ```bash
@@ -104,7 +111,10 @@ failed to bundle project: `failed to run linuxdeploy`
 `linuxdeploy` bundles an old binutils `strip` that does not understand the
 `.relr.dyn` relocation sections current system libraries carry. `NO_STRIP` skips
 that pass. Verified working here: it produces a runnable
-`MetaCubeXD_1.270.6_amd64.AppImage`.
+`MetaCubeXD_<version>_amd64.AppImage`, where `<version>` is the Tauri shell's own
+version (`apps/tauri/src-tauri/tauri.conf.json`, or the tag in CI) — the shell
+is versioned independently of the dashboard now, so quoting a specific number
+here would only go stale again.
 
 Two things to know before reaching for it:
 
@@ -148,6 +158,91 @@ The title bar is already handled: the bridge's `isDesktop` comes from Rust's
 neither the desktop title bar nor its window controls.
 
 Also not done: tray icon, launch-at-login (both desktop-only).
+
+## Releasing
+
+CI is fork-owned. Upstream's `release.yml` was deleted — it published to
+`ghcr.io/metacubex/*` and `d.metacubex.one`, neither of which this fork owns.
+
+| Workflow            | Trigger        | Does                                            |
+| ------------------- | -------------- | ----------------------------------------------- |
+| `unit-tests.yml`    | push, PR       | Upstream's JS suites, plus the Tauri suite      |
+| `e2e.yml`           | push           | Upstream's Playwright run against `packages/ui` |
+| `verify-tauri.yml`  | push, PR       | `typecheck` and a real Rust build               |
+| `release-tauri.yml` | `tauri-v*` tag | Builds and publishes installers                 |
+| `stale.yml`         | manual only    | Upstream's issue bot; no longer on a cron       |
+
+To cut a release:
+
+```bash
+# 1. Bump the local default (optional; CI takes the version from the tag)
+#    apps/tauri/src-tauri/tauri.conf.json  ->  "version": "0.2.0"
+
+# 2. Tag and push
+git tag tauri-v0.2.0
+git push origin tauri-v0.2.0
+```
+
+The workflow gates on the test suites, then builds on three runners and attaches
+`.deb`/`.rpm`/`.AppImage`, `.msi`/`.exe`, and macOS's universal `.dmg` to a
+**draft** GitHub Release — seven artifacts in total. `tauri-action` also
+uploads the `.app` bundle itself as a tarball,
+`MetaCubeXD_<version>_universal.app.tar.gz`, alongside the `.dmg`; that extra
+file is expected, not a bug. Write the notes, then publish it.
+
+A tag containing `-rc` is marked as a prerelease, so `tauri-v0.2.0-rc1` is the
+way to exercise the pipeline without announcing anything.
+
+Tauri's WiX bundler accepts only a numeric-only pre-release identifier, and
+`-rc1` is not one, so `release-tauri.yml` sets `bundle.windows.wix.version` to
+the tag's `major.minor.patch` prefix (`0.2.0`, not `0.2.0-rc1`) before building.
+The `.msi` filename still carries the full tag. Skip that override and an `-rc`
+tag fails the entire Windows leg.
+
+**Versions are never written back into the repository.** The tag is the source
+of truth, and CI patches `tauri.conf.json` in the runner only. That is
+deliberate: release-please would have written `CHANGELOG.md` and two
+`package.json` versions, every one of which upstream rewrites on its own
+release schedule, and every one of which would then conflict on merge.
+
+**Artifacts are unsigned.** macOS shows a Gatekeeper warning — right-click →
+Open, or `xattr -d com.apple.quarantine /Applications/MetaCubeXD.app`. Windows
+shows SmartScreen — More info → Run anyway. Adding signing later is
+configuration on `tauri-action`, not a redesign.
+
+**`pnpm-workspace.yaml` sets `shellEmulator: true`.** `packages/ui`'s
+`generate:desktop` script uses a POSIX inline env-var prefix (`FOO=bar cmd`)
+that `cmd.exe` cannot parse, and `tauri.conf.json` invokes that same script as
+`beforeBuildCommand` on every platform, including the Windows runner. The
+script is upstream-owned, so the fix belongs in the workspace config rather
+than in `packages/ui`. Do not remove it.
+
+### Stale references left in upstream-owned files
+
+These are wrong for this fork but are **deliberately not edited**, because they
+live in files upstream rewrites and touching them would buy a merge conflict for
+no functional gain:
+
+- `CONTRIBUTING.md` links to `.github/workflows/release.yml`, which this fork
+  deleted, and still documents `pnpm dev:server` / `pnpm build:desktop` and lists
+  `apps/server` / `apps/desktop` as workspace members.
+- `.github/copilot-instructions.md` points at the same deleted workflow.
+- `Casks/metacubexd.rb` installs `MetaCubeXD-mac-<arch>.dmg` from
+  **upstream's** releases. It still resolves, so it silently installs upstream's
+  Electron app rather than this fork's Tauri one. This fork's macOS artifact is
+  `MetaCubeXD_<version>_universal.dmg`.
+- `README.md`'s build badge queries upstream's `release.yml`, so it has never
+  reflected this fork's CI status.
+- `packages/ui/Dockerfile` and `apps/server/Dockerfile` are built by no workflow
+  here.
+- `release-please-config.json` still lists `packages/ui/package.json` under
+  `extra-files`. It is inert — nothing triggers release-please — but it would
+  write a version into a file upstream also rewrites. **Do not re-enable
+  release-please** without revisiting the tag-driven model.
+
+Also expect noise, not failure, from the codecov step in `unit-tests.yml`: this
+fork likely has no `CODECOV_TOKEN`, and `verbose: true` makes that loud, but
+`fail_ci_if_error: false` keeps the job green.
 
 ## Known limitations
 
