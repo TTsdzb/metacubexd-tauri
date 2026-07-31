@@ -76,7 +76,7 @@ in new paths. Regenerate the lockfile with pnpm rather than resolving it by
 hand.
 
 After a merge that touched `packages/ui`, run `pnpm --filter @metacubexd/tauri
-test` — 6 spec files, 84 tests. Those specs encode what the shim assumes about
+test` — 7 spec files, 95 tests. Those specs encode what the shim assumes about
 the dashboard — the `window.metacubexd` bridge shape, `event.data` carrying JSON
 text, the `-webkit-app-region` title bar — so they are what catches an upstream
 change that breaks the shell.
@@ -198,6 +198,26 @@ after `startDragging()` differs — GTK does, the Windows modal move loop does
 not — so the shim handles the maximize itself and swallows the following
 `dblclick` in the capture phase. Without that, GTK toggled twice and the window
 maximized and instantly restored.
+
+### Edge resizing is emulated, and cannot use tao's built-in
+
+`shim/resize.ts` implements edge and corner resizing in JavaScript. That looks
+redundant — tao already does it for undecorated windows, with `hit_test` plus
+`begin_resize_drag`, gated on `!is_decorated() && is_resizable() &&
+!is_maximized()`, all of which hold here. **It is unreachable.** Those handlers
+are connected to the `GtkWindow`, and GTK3 propagates button and motion events
+_upward_ from the widget under the pointer, so the WebKitWebView filling the
+window consumes them first. Every Tauri app with a full-bleed webview and
+`decorations: false` has this; the window simply cannot be resized without a
+JS-side implementation.
+
+The mousedown listener is capture-phase so it beats `shim/drag.ts`: the top
+border overlaps the title bar's drag strip, and at the very edge resizing must
+win over moving.
+
+Known trade-off: the 5px border sits over the outermost sliver of any
+edge-flush scrollbar, so a press there starts a resize instead of a scroll.
+Narrow `BORDER` if that becomes annoying.
 
 ### WebSocket connections leak on reload
 
