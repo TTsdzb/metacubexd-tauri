@@ -145,7 +145,7 @@ Consequences, all good ones:
 ### Plain binaries ship alongside the installers
 
 `release-tauri.yml` sets `uploadPlainBinary: true`, so each release also carries
-the unpackaged executable: `app_linux_x86_64`, `app_windows_x86_64.exe`,
+the unpackaged executable: `app_linux_x64`, `app_windows_x64.exe`,
 `app_darwin_universal`. `tauri-action` injects the platform into the name for
 plain binaries specifically, so the three do not collide.
 

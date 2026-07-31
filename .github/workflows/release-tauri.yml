@@ -171,7 +171,7 @@ jobs:
           # WebKitGTK. The flag is all-or-nothing across platforms, so Windows
           # and macOS get one too; see FORK.md for why those two are less
           # useful. Names do not collide: tauri-action injects the platform for
-          # plain binaries (app_linux_x86_64, app_windows_x86_64.exe,
+          # plain binaries (app_linux_x64, app_windows_x64.exe,
           # app_darwin_universal).
           uploadPlainBinary: true
           args: ${{ matrix.args }}
