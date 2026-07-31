@@ -1,3 +1,4 @@
+import { fetch as tauriFetch } from '@tauri-apps/plugin-http'
 import { describe, expect, it, vi } from 'vitest'
 import { createFetch } from '../fetch'
 
@@ -58,10 +59,40 @@ describe('createFetch', () => {
 
     await patched('https://api.github.com/repos/a/b', init)
 
-    expect(native).toHaveBeenCalledWith(
-      'https://api.github.com/repos/a/b',
-      init,
-    )
+    // toHaveBeenCalledWith compares structurally, which would still pass for
+    // a shim that shallow-cloned init. The plugin mutates the init object it
+    // receives, so identity — not structural equality — is what matters.
+    expect(native.mock.calls[0]?.[0]).toBe('https://api.github.com/repos/a/b')
+    expect(native.mock.calls[0]?.[1]).toBe(init)
+  })
+
+  it('forwards a Request signal into init when the caller did not supply one', async () => {
+    const { native, patched } = transports()
+    const controller = new AbortController()
+    const request = new Request('http://192.168.1.5:9090/proxies', {
+      signal: controller.signal,
+    })
+
+    await patched(request)
+
+    expect(native.mock.calls[0]?.[1]?.signal).toBe(request.signal)
+  })
+
+  it('uses the plugin http fetch as the default native transport', async () => {
+    const webview = vi.fn(async () => new Response('webview'))
+    const patched = createFetch(webview)
+
+    await patched('http://192.168.1.5:9090/version')
+
+    expect(vi.mocked(tauriFetch)).toHaveBeenCalledTimes(1)
+  })
+
+  it('propagates a native transport rejection without catching it', async () => {
+    const { native, patched } = transports()
+    const err = new Error('network unreachable')
+    native.mockRejectedValue(err)
+
+    await expect(patched('http://192.168.1.5:9090/version')).rejects.toBe(err)
   })
 
   it('returns whatever the chosen transport returns', async () => {
