@@ -17,6 +17,7 @@ function fakeWindow() {
       return unlisten
     }),
     startDragging: vi.fn(async () => {}),
+    startResizeDragging: vi.fn(async () => {}),
   }
   return { win, unlisten, resize: () => resizeHandler?.() }
 }
@@ -36,6 +37,7 @@ function fakeWindowWithResponses(responses: boolean[]) {
       return unlisten
     }),
     startDragging: vi.fn(async () => {}),
+    startResizeDragging: vi.fn(async () => {}),
   }
   return { win, resize: () => resizeHandler?.() }
 }
@@ -162,6 +164,7 @@ describe('createBridge', () => {
         throw new Error('subscribe failed')
       }),
       startDragging: vi.fn(async () => {}),
+      startResizeDragging: vi.fn(async () => {}),
     }
     const bridge = createBridge('linux', true, () => win)
 

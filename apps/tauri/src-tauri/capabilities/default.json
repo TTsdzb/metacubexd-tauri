@@ -10,6 +10,7 @@
     "core:window:allow-close",
     "core:window:allow-is-maximized",
     "core:window:allow-start-dragging",
+    "core:window:allow-start-resize-dragging",
     {
       "identifier": "http:default",
       "allow": [{ "url": "http://*:*" }, { "url": "https://*:*" }]

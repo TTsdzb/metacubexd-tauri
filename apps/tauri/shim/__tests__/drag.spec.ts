@@ -12,6 +12,7 @@ function fakeWindow() {
     isMaximized: vi.fn(async () => false),
     onResized: vi.fn(async () => () => {}),
     startDragging: vi.fn(async () => {}),
+    startResizeDragging: vi.fn(async () => {}),
   } satisfies TauriWindow
 }
 

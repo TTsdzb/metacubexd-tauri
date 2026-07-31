@@ -1,6 +1,7 @@
 import { createBridge } from './bridge'
 import { installDragRegions } from './drag'
 import { createFetch } from './fetch'
+import { installResizeHandles } from './resize'
 import { createWebSocket } from './websocket'
 
 export interface ShimTarget {
@@ -40,9 +41,18 @@ export function install(target: ShimTarget): void {
     target.__MCXD_IS_DESKTOP__ ?? true,
   )
 
-  // The one DOM-touching, purely cosmetic wiring: isolate it so a throw here
-  // (unlike the transports above, which are load-bearing) degrades to a
-  // missing title-bar drag instead of leaving the rest of install() unrun.
+  // The DOM-touching window-management wiring. Isolated because, unlike the
+  // transports above, it is not load-bearing: a throw here degrades to a
+  // title bar you cannot drag or an edge you cannot resize, rather than
+  // leaving the rest of install() unrun. Resize goes on first so its
+  // capture-phase listener is registered before drag's — the top border
+  // overlaps the title bar strip, and at the very edge resizing must win.
+  try {
+    installResizeHandles(target.document)
+  } catch (error) {
+    console.error('metacubexd shim: installResizeHandles failed', error)
+  }
+
   try {
     installDragRegions(target.document)
   } catch (error) {

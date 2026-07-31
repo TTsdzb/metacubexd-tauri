@@ -1,5 +1,19 @@
 import { getCurrentWindow } from '@tauri-apps/api/window'
 
+/**
+ * Mirrors `ResizeDirection` from `@tauri-apps/api/window`, which the package
+ * declares but does not export.
+ */
+export type ResizeDirection =
+  | 'North'
+  | 'NorthEast'
+  | 'East'
+  | 'SouthEast'
+  | 'South'
+  | 'SouthWest'
+  | 'West'
+  | 'NorthWest'
+
 /** The slice of Tauri's window API this shim drives. */
 export interface TauriWindow {
   minimize: () => Promise<void>
@@ -8,6 +22,7 @@ export interface TauriWindow {
   isMaximized: () => Promise<boolean>
   onResized: (cb: () => void) => Promise<() => void>
   startDragging: () => Promise<void>
+  startResizeDragging: (direction: ResizeDirection) => Promise<void>
 }
 
 export type WindowSource = () => TauriWindow
