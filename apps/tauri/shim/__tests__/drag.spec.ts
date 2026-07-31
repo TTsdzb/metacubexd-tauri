@@ -1,5 +1,5 @@
 import type { TauriWindow } from '../bridge'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { installDragRegions } from '../drag'
 
 vi.mock('@tauri-apps/api/window', () => ({ getCurrentWindow: vi.fn() }))
@@ -14,6 +14,20 @@ function fakeWindow() {
     startDragging: vi.fn(async () => {}),
   } satisfies TauriWindow
 }
+
+// Every case installs onto the same jsdom document, so an uninstalled listener
+// from an earlier test would still see later events — and, with the
+// double-click arbitration below, would swallow dblclicks meant for another
+// case. Register each installation for teardown.
+const installed: (() => void)[] = []
+function install(win: TauriWindow) {
+  const uninstall = installDragRegions(document, () => win)
+  installed.push(uninstall)
+  return uninstall
+}
+afterEach(() => {
+  while (installed.length) installed.pop()!()
+})
 
 // Mirrors TitleBar.vue: a draggable strip containing a no-drag button cluster.
 function renderTitleBar() {
@@ -75,7 +89,7 @@ describe('installDragRegions', () => {
 
   it('starts a drag from a drag region', () => {
     const win = fakeWindow()
-    installDragRegions(document, () => win)
+    install(win)
 
     mousedown('bar')
 
@@ -84,7 +98,7 @@ describe('installDragRegions', () => {
 
   it('does not drag from a no-drag descendant', () => {
     const win = fakeWindow()
-    installDragRegions(document, () => win)
+    install(win)
 
     mousedown('close')
     mousedown('icon')
@@ -94,7 +108,7 @@ describe('installDragRegions', () => {
 
   it('ignores content outside any drag region', () => {
     const win = fakeWindow()
-    installDragRegions(document, () => win)
+    install(win)
 
     mousedown('content')
 
@@ -103,7 +117,7 @@ describe('installDragRegions', () => {
 
   it('ignores non-primary buttons so right-click menus still work', () => {
     const win = fakeWindow()
-    installDragRegions(document, () => win)
+    install(win)
 
     mousedown('bar', 2)
 
@@ -112,7 +126,7 @@ describe('installDragRegions', () => {
 
   it('stops listening when uninstalled', () => {
     const win = fakeWindow()
-    const uninstall = installDragRegions(document, () => win)
+    const uninstall = install(win)
 
     uninstall()
     mousedown('bar')
@@ -128,7 +142,7 @@ describe('installDragRegions', () => {
   // what actually restores double-click-to-maximize.
   it('maximizes on double click instead of dragging', () => {
     const win = fakeWindow()
-    installDragRegions(document, () => win)
+    install(win)
 
     mousedown('bar', 0, 2)
 
@@ -138,7 +152,7 @@ describe('installDragRegions', () => {
 
   it('drags (not maximizes) on a single click', () => {
     const win = fakeWindow()
-    installDragRegions(document, () => win)
+    install(win)
 
     mousedown('bar', 0, 1)
 
@@ -148,7 +162,7 @@ describe('installDragRegions', () => {
 
   it('does nothing on a third click of a triple click', () => {
     const win = fakeWindow()
-    installDragRegions(document, () => win)
+    install(win)
 
     mousedown('bar', 0, 3)
 
@@ -166,7 +180,7 @@ describe('installDragRegions', () => {
     const bar = document.getElementById('bar')!
     bar.removeAttribute('style')
     vi.spyOn(bar.style, 'getPropertyValue').mockReturnValue('drag')
-    installDragRegions(document, () => win)
+    install(win)
 
     mousedown('bar')
 
@@ -178,7 +192,7 @@ describe('installDragRegions', () => {
     const controls = document.getElementById('controls')!
     controls.removeAttribute('style')
     vi.spyOn(controls.style, 'getPropertyValue').mockReturnValue('no-drag')
-    installDragRegions(document, () => win)
+    install(win)
 
     mousedown('close')
 
@@ -190,7 +204,7 @@ describe('installDragRegions', () => {
     const win = fakeWindow()
     win.startDragging.mockRejectedValueOnce(error)
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
-    installDragRegions(document, () => win)
+    install(win)
 
     mousedown('bar')
     await vi.waitFor(() => {
@@ -219,7 +233,7 @@ describe('installDragRegions with the marker applied the way Vue applies it', ()
 
   it('still starts a drag from the strip', () => {
     const win = fakeWindow()
-    installDragRegions(document, () => win)
+    install(win)
 
     mousedown('bar')
 
@@ -228,7 +242,7 @@ describe('installDragRegions with the marker applied the way Vue applies it', ()
 
   it('still maximizes on double click', () => {
     const win = fakeWindow()
-    installDragRegions(document, () => win)
+    install(win)
 
     mousedown('bar', 0, 2)
 
@@ -238,7 +252,7 @@ describe('installDragRegions with the marker applied the way Vue applies it', ()
 
   it('still lets the no-drag cluster block a drag', () => {
     const win = fakeWindow()
-    installDragRegions(document, () => win)
+    install(win)
 
     mousedown('close')
     mousedown('icon')
@@ -248,10 +262,96 @@ describe('installDragRegions with the marker applied the way Vue applies it', ()
 
   it('still ignores content outside any region', () => {
     const win = fakeWindow()
-    installDragRegions(document, () => win)
+    install(win)
 
     mousedown('content')
 
     expect(win.startDragging).not.toHaveBeenCalled()
+  })
+})
+
+// TitleBar.vue puts `@dblclick="!isMac && toggleMaximize()"` on the same strip
+// this module handles mousedown for. The branch above assumed the platform's
+// modal move loop would eat the mouseup so no dblclick could ever reach it —
+// true on Windows, false on GTK, where a double-click maximized and instantly
+// restored because both fired.
+describe('installDragRegions double-click arbitration', () => {
+  beforeEach(() => renderTitleBar())
+
+  // Stands in for the component's own listener, attached to the strip the
+  // same way Vue attaches it.
+  function titleBarDblClickHandler() {
+    const handler = vi.fn()
+    document.getElementById('bar')!.addEventListener('dblclick', handler)
+    return handler
+  }
+
+  function dblclick(id: string) {
+    document
+      .getElementById(id)!
+      .dispatchEvent(
+        new MouseEvent('dblclick', { bubbles: true, cancelable: true }),
+      )
+  }
+
+  it('swallows the dblclick that follows its own maximize, so it toggles once', () => {
+    const win = fakeWindow()
+    const vueHandler = titleBarDblClickHandler()
+    install(win)
+
+    mousedown('bar', 0, 2)
+    dblclick('bar')
+
+    expect(win.toggleMaximize).toHaveBeenCalledTimes(1)
+    expect(vueHandler).not.toHaveBeenCalled()
+  })
+
+  it('swallows only one dblclick', () => {
+    const win = fakeWindow()
+    const vueHandler = titleBarDblClickHandler()
+    install(win)
+
+    mousedown('bar', 0, 2)
+    dblclick('bar')
+    dblclick('bar')
+
+    expect(vueHandler).toHaveBeenCalledTimes(1)
+  })
+
+  it('leaves a dblclick alone when it did not handle the maximize itself', () => {
+    const win = fakeWindow()
+    const vueHandler = titleBarDblClickHandler()
+    install(win)
+
+    dblclick('bar')
+
+    expect(vueHandler).toHaveBeenCalledTimes(1)
+    expect(win.toggleMaximize).not.toHaveBeenCalled()
+  })
+
+  it('clears a stale swallow flag on the next fresh press', () => {
+    const win = fakeWindow()
+    const vueHandler = titleBarDblClickHandler()
+    install(win)
+
+    // A platform that ate the mouseup: our branch ran, no dblclick arrived.
+    mousedown('bar', 0, 2)
+    // Later, an unrelated interaction.
+    mousedown('bar', 0, 1)
+    dblclick('bar')
+
+    expect(vueHandler).toHaveBeenCalledTimes(1)
+  })
+
+  it('stops listening for dblclick when uninstalled', () => {
+    const win = fakeWindow()
+    const vueHandler = titleBarDblClickHandler()
+    const uninstall = install(win)
+
+    mousedown('bar', 0, 2)
+    uninstall()
+    dblclick('bar')
+
+    expect(vueHandler).toHaveBeenCalledTimes(1)
   })
 })

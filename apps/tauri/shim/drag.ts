@@ -67,13 +67,21 @@ function regionOf(el: Element): 'drag' | 'no-drag' | null {
  * no-drag button cluster inside a drag strip stays clickable).
  *
  * A plain `startDragging()` on every click would break
- * TitleBar.vue's `@dblclick="toggleMaximize()"`: `startDragging()` hands the
- * pointer to the window manager's modal move loop, which swallows the
- * matching mouseup, so the webview never sees a `click` and therefore never
- * a `dblclick`. Branching on `event.detail` (Tauri's own drag-region script
- * does the same) restores it: a first click starts a drag, a second toggles
- * maximize, and a third (or later) does nothing so a triple-click doesn't
- * start a fresh drag.
+ * TitleBar.vue's `@dblclick="toggleMaximize()"` on platforms where
+ * `startDragging()` hands the pointer to a modal move loop that swallows the
+ * matching mouseup — the webview then never sees a `click`, and so never a
+ * `dblclick`. Branching on `event.detail` (Tauri's own drag-region script does
+ * the same) covers that: a first click starts a drag, a second toggles
+ * maximize, and a third or later does nothing so a triple-click cannot start a
+ * fresh drag.
+ *
+ * That swallowing is platform-dependent, though, and GTK does NOT do it —
+ * observed directly: a double-click maximized and instantly restored, because
+ * our branch fired on mousedown and then TitleBar.vue's `@dblclick` fired too.
+ * So whenever we handle a double click ourselves, the next `dblclick` is
+ * swallowed in the capture phase, before it can reach the component's own
+ * listener. Where the platform really does eat the mouseup there is simply no
+ * `dblclick` to swallow, and the flag is cleared by the next interaction.
  *
  * Returns an uninstall function.
  */
@@ -81,9 +89,16 @@ export function installDragRegions(
   doc: Document,
   windowSource: WindowSource = getCurrentWindow,
 ): () => void {
+  // Set when we toggle maximize ourselves, so the platform's own dblclick —
+  // which TitleBar.vue also listens for — does not toggle it straight back.
+  let swallowNextDblClick = false
+
   const onMouseDown = (event: MouseEvent) => {
     if (event.button !== 0) return
     if (event.detail !== 1 && event.detail !== 2) return
+
+    // A fresh press ends any window in which a stale flag could still fire.
+    if (event.detail === 1) swallowNextDblClick = false
 
     for (
       let node = event.target instanceof Element ? event.target : null;
@@ -100,6 +115,7 @@ export function installDragRegions(
 
         const win = windowSource()
         const maximize = event.detail === 2
+        if (maximize) swallowNextDblClick = true
         void (maximize ? win.toggleMaximize() : win.startDragging()).catch(
           (error: unknown) => {
             console.error(
@@ -113,7 +129,20 @@ export function installDragRegions(
     }
   }
 
-  doc.addEventListener('mousedown', onMouseDown)
+  // Capture phase, so this runs before the listener TitleBar.vue puts on the
+  // strip itself and can stop the event reaching it.
+  const onDblClick = (event: MouseEvent) => {
+    if (!swallowNextDblClick) return
+    swallowNextDblClick = false
+    event.stopImmediatePropagation()
+    event.preventDefault()
+  }
 
-  return () => doc.removeEventListener('mousedown', onMouseDown)
+  doc.addEventListener('mousedown', onMouseDown)
+  doc.addEventListener('dblclick', onDblClick, true)
+
+  return () => {
+    doc.removeEventListener('mousedown', onMouseDown)
+    doc.removeEventListener('dblclick', onDblClick, true)
+  }
 }
