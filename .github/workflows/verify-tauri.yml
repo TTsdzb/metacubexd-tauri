@@ -1,0 +1,73 @@
+name: verify-tauri
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+  pull_request:
+    branches:
+      - main
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    # Pinned, not `latest`. The runner's glibc sets the floor for which distros
+    # can run what we build, and its older binutils is what lets AppImage build
+    # without NO_STRIP.
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          cache: pnpm
+          node-version: lts/*
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/tauri/src-tauri
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            librsvg2-dev \
+            patchelf \
+            build-essential
+
+      - name: Install dependencies
+        run: pnpm install
+
+      # unit-tests.yml runs the JS suites; it never typechecks.
+      - name: Typecheck
+        run: pnpm typecheck
+
+      # src-tauri embeds shim.js with include_str!, and shim.js is gitignored.
+      # Nothing here runs the `build` npm script (which would generate it), so
+      # generate it explicitly or cargo fails on a missing file.
+      - name: Generate the transport shim
+        run: pnpm --filter @metacubexd/tauri build:shim
+
+      # --no-bundle: compiling is what catches a broken capability file, a bad
+      # include_str!, or a dependency that stopped resolving. Producing
+      # installers is the release workflow's job and would only add minutes here.
+      - name: Build the Tauri app
+        run: pnpm --filter @metacubexd/tauri exec tauri build --no-bundle
