@@ -583,7 +583,9 @@ describe('createWebSocketClass', () => {
     const connect = vi.fn(async () => socket)
     const Ctor = createWebSocketClass(connect)
 
-    new Ctor('ws://192.168.1.5:9090/logs?token=abc')
+    // `void` because the repo's eslint config enforces `no-new`, and this
+    // construction is wanted purely for its side effect.
+    void new Ctor('ws://192.168.1.5:9090/logs?token=abc')
     await settle()
 
     expect(connect).toHaveBeenCalledWith('ws://192.168.1.5:9090/logs?token=abc')
