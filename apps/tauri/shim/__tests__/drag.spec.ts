@@ -27,6 +27,34 @@ function renderTitleBar() {
   `
 }
 
+// Mirrors what the app ACTUALLY renders under WebKitGTK, which is not what the
+// fixture above produces. Vue applies a static `style="..."` through the CSSOM
+// rather than setAttribute, and WebKitGTK drops `-webkit-app-region` as
+// unrecognized — so in the real window there is no style attribute and no CSS
+// declaration. All that survives is the expando Vue's setStyle leaves behind
+// when autoPrefix cannot find a supported spelling.
+//
+// Verified against the running app: attribute null, getPropertyValue '',
+// getComputedStyle ''. The innerHTML fixture above sets a real attribute and so
+// cannot catch a regression here.
+function renderTitleBarAsVueDoes() {
+  document.body.innerHTML = `
+    <div id="bar">
+      <div id="controls">
+        <button id="close"><svg id="icon"></svg></button>
+      </div>
+    </div>
+    <main id="content"></main>
+  `
+  const mark = (id: string, value: string) => {
+    const style = document.getElementById(id)!.style as CSSStyleDeclaration &
+      Record<string, unknown>
+    style['-webkit-app-region'] = value
+  }
+  mark('bar', 'drag')
+  mark('controls', 'no-drag')
+}
+
 // A real mousedown always carries a detail (click count) of at least 1;
 // default to a single click so callers that don't care about double-click
 // behavior still exercise the realistic case.
@@ -174,5 +202,56 @@ describe('installDragRegions', () => {
       error,
     )
     consoleError.mockRestore()
+  })
+})
+
+// The shape the app actually renders. Every case above builds its DOM with
+// innerHTML, which writes a real style attribute — a construction path the
+// real app never takes. These pin the expando route instead.
+describe('installDragRegions with the marker applied the way Vue applies it', () => {
+  beforeEach(() => renderTitleBarAsVueDoes())
+
+  it('sees no style attribute and no CSS declaration, as in the real window', () => {
+    const bar = document.getElementById('bar')!
+    expect(bar.getAttribute('style')).toBeNull()
+    expect(bar.style.getPropertyValue('-webkit-app-region')).toBe('')
+  })
+
+  it('still starts a drag from the strip', () => {
+    const win = fakeWindow()
+    installDragRegions(document, () => win)
+
+    mousedown('bar')
+
+    expect(win.startDragging).toHaveBeenCalledTimes(1)
+  })
+
+  it('still maximizes on double click', () => {
+    const win = fakeWindow()
+    installDragRegions(document, () => win)
+
+    mousedown('bar', 0, 2)
+
+    expect(win.toggleMaximize).toHaveBeenCalledTimes(1)
+    expect(win.startDragging).not.toHaveBeenCalled()
+  })
+
+  it('still lets the no-drag cluster block a drag', () => {
+    const win = fakeWindow()
+    installDragRegions(document, () => win)
+
+    mousedown('close')
+    mousedown('icon')
+
+    expect(win.startDragging).not.toHaveBeenCalled()
+  })
+
+  it('still ignores content outside any region', () => {
+    const win = fakeWindow()
+    installDragRegions(document, () => win)
+
+    mousedown('content')
+
+    expect(win.startDragging).not.toHaveBeenCalled()
   })
 })
