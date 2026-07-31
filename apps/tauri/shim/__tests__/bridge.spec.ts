@@ -21,6 +21,25 @@ function fakeWindow() {
   return { win, unlisten, resize: () => resizeHandler?.() }
 }
 
+/** Like `fakeWindow()`, but `isMaximized()` replays a scripted sequence. */
+function fakeWindowWithResponses(responses: boolean[]) {
+  let resizeHandler: (() => void) | null = null
+  const unlisten = vi.fn()
+  let call = 0
+  const win: TauriWindow = {
+    minimize: vi.fn(async () => {}),
+    toggleMaximize: vi.fn(async () => {}),
+    close: vi.fn(async () => {}),
+    isMaximized: vi.fn(async () => responses[call++] ?? false),
+    onResized: vi.fn(async (cb: () => void) => {
+      resizeHandler = cb
+      return unlisten
+    }),
+    startDragging: vi.fn(async () => {}),
+  }
+  return { win, resize: () => resizeHandler?.() }
+}
+
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0))
 
 describe('createBridge', () => {
@@ -109,5 +128,62 @@ describe('createBridge', () => {
 
     expect(seen).toEqual([])
     expect(unlisten).toHaveBeenCalledTimes(1)
+  })
+
+  it('emits only on change, not on every resize', async () => {
+    // A caching/read-once implementation would pass the other tests here
+    // identically, since the fake's isMaximized is a constant `true`
+    // elsewhere. This drives a real transition (true, true, false) across
+    // three resizes and asserts the duplicate is swallowed.
+    const { win, resize } = fakeWindowWithResponses([true, true, false])
+    const bridge = createBridge('linux', true, () => win)
+    const seen: boolean[] = []
+
+    bridge.window.onMaximizeChange((maximized) => seen.push(maximized))
+    await settle()
+    resize()
+    await settle()
+    resize()
+    await settle()
+    resize()
+    await settle()
+
+    expect(seen).toEqual([true, false])
+  })
+
+  it('reports rather than swallows a failed onResized subscription', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const win: TauriWindow = {
+      minimize: vi.fn(async () => {}),
+      toggleMaximize: vi.fn(async () => {}),
+      close: vi.fn(async () => {}),
+      isMaximized: vi.fn(async () => true),
+      onResized: vi.fn(async () => {
+        throw new Error('subscribe failed')
+      }),
+      startDragging: vi.fn(async () => {}),
+    }
+    const bridge = createBridge('linux', true, () => win)
+
+    bridge.window.onMaximizeChange(() => {})
+    await settle()
+
+    expect(consoleError).toHaveBeenCalled()
+    consoleError.mockRestore()
+  })
+
+  it('reports rather than leaves an unhandled rejection when minimize() fails', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const { win } = fakeWindow()
+    win.minimize = vi.fn(async () => {
+      throw new Error('not allowed')
+    })
+    const bridge = createBridge('linux', true, () => win)
+
+    bridge.window.minimize()
+    await settle()
+
+    expect(consoleError).toHaveBeenCalled()
+    consoleError.mockRestore()
   })
 })
