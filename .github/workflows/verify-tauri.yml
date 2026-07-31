@@ -19,7 +19,9 @@ permissions:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Cancel a superseded PR run, but never a push to `main` — cancelling that
+  # would let a second merge skip verification of the first.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   verify:
@@ -51,7 +53,8 @@ jobs:
             libwebkit2gtk-4.1-dev \
             librsvg2-dev \
             patchelf \
-            build-essential
+            build-essential \
+            libdbus-1-dev
 
       - name: Install dependencies
         run: pnpm install
