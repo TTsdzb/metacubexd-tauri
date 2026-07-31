@@ -4,10 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "node build-shim.mjs && tauri build",
+    "build": "node build-shim.mjs && node run-tauri.mjs build",
     "build:shim": "node build-shim.mjs",
-    "dev": "node build-shim.mjs && tauri dev",
-    "tauri": "tauri",
+    "dev": "node build-shim.mjs && node run-tauri.mjs dev",
+    "tauri": "node run-tauri.mjs",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },

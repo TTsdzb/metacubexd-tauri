@@ -37,6 +37,31 @@ frontend comes from `tauri.conf.json`'s `beforeBuildCommand`, which invokes the
 UI's own `generate:desktop` script (relative base URL, PWA disabled) rather than
 plain `nuxt generate`.
 
+They also go through `apps/tauri/run-tauri.mjs` rather than calling the Tauri
+CLI directly. See below.
+
+### NVIDIA on Linux: the window dies at startup without this
+
+On NVIDIA's proprietary driver under Wayland, a WebKitGTK window fails on
+launch unless explicit sync is disabled:
+
+```bash
+__NV_DISABLE_EXPLICIT_SYNC=1
+```
+
+`run-tauri.mjs` sets it automatically on Linux, so `pnpm dev:tauri` and
+`pnpm build:tauri` work on a fresh checkout with no shell setup. Only NVIDIA's
+driver reads the variable, so it is inert on AMD, Intel, and every non-Linux
+platform, and an already-exported value always wins if you need to override it.
+
+Worth knowing if you go looking for a different fix: **Tauri does not force
+X11.** Neither `tao`, `wry`, nor `tauri` sets `GDK_BACKEND` anywhere, so GTK
+picks the backend itself and prefers Wayland whenever `WAYLAND_DISPLAY` is set.
+"Switch to Wayland" is therefore not a remedy — a session that hits this bug is
+already on Wayland, which is exactly why explicit sync is involved at all. The
+opposite move is the real alternative: `GDK_BACKEND=x11` sidesteps explicit sync
+entirely, at the cost of running through XWayland.
+
 ## Merging upstream
 
 ```bash
@@ -63,9 +88,24 @@ Linux is what is built and smoke-tested today: `pnpm build:tauri` produces a
 rolling-release host — `linuxdeploy` ships an old `strip` that rejects the
 `.relr.dyn` sections in current system libraries and exits non-zero. That is a
 toolchain limitation, not a config one; use
-`pnpm --filter @metacubexd/tauri exec tauri build --bundles deb` locally and
-leave `"targets": "all"` alone, since that setting is what will give the Windows
-and macOS runners their bundles.
+`pnpm --filter @metacubexd/tauri tauri build --bundles deb` locally and leave
+`"targets": "all"` alone, since that setting is what will give the Windows and
+macOS runners their bundles.
+
+Two related flags, since they are easy to confuse:
+
+- `--bundles deb,rpm,appimage` picks which bundlers run. `--bundles appimage`
+  is how you retry only the failing one after changing the toolchain.
+- `--no-bundle` skips bundling **entirely**. It does not produce an AppImage —
+  it leaves just the release binary at
+  `apps/tauri/src-tauri/target/release/app`. It is the right flag when you want
+  a runnable build without touching any bundler, and the wrong one if an
+  AppImage is the goal.
+
+To actually get an AppImage on a host where `linuxdeploy` fails, the options are
+to build in a container with an older toolchain (which is what CI will do), or
+to package the `--no-bundle` binary with a different tool such as
+`appimagetool`. Neither needs a config change.
 
 The scaffold deliberately keeps every other Tauri target reachable, roughly in
 this planned order:
