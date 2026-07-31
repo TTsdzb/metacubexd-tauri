@@ -10,11 +10,6 @@
           "type": "json",
           "path": "packages/ui/package.json",
           "jsonpath": "$.version"
-        },
-        {
-          "type": "json",
-          "path": "apps/desktop/package.json",
-          "jsonpath": "$.version"
         }
       ]
     }
