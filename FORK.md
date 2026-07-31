@@ -83,29 +83,51 @@ change that breaks the shell.
 
 ## Platform support
 
-Linux is what is built and smoke-tested today: `pnpm build:tauri` produces a
-`.deb` and an `.rpm`. The AppImage target is configured but may not build on a
-rolling-release host — `linuxdeploy` ships an old `strip` that rejects the
-`.relr.dyn` sections in current system libraries and exits non-zero. That is a
-toolchain limitation, not a config one; use
-`pnpm --filter @metacubexd/tauri tauri build --bundles deb` locally and leave
-`"targets": "all"` alone, since that setting is what will give the Windows and
-macOS runners their bundles.
+Linux is what is built and smoke-tested today. `pnpm build:tauri` produces a
+`.deb` and an `.rpm` (~7.8 MB each) with no special setup.
 
-Two related flags, since they are easy to confuse:
+### AppImage needs `NO_STRIP=true` on a rolling-release host
+
+```bash
+NO_STRIP=true pnpm build:tauri
+```
+
+Without it the AppImage step fails and takes the whole build's exit code with
+it:
+
+```
+ERROR: Strip call failed: .../strip: .../libzstd.so.1:
+       unknown type [0x13] section `.relr.dyn'
+failed to bundle project: `failed to run linuxdeploy`
+```
+
+`linuxdeploy` bundles an old binutils `strip` that does not understand the
+`.relr.dyn` relocation sections current system libraries carry. `NO_STRIP` skips
+that pass. Verified working here: it produces a runnable
+`MetaCubeXD_1.270.6_amd64.AppImage`.
+
+Two things to know before reaching for it:
+
+- **It costs size.** Skipping the strip pass leaves the bundled WebKitGTK
+  libraries unstripped, which is most of why the AppImage lands at ~100 MB
+  against the deb's 7.8 MB.
+- **It keys on presence, not value.** `NO_STRIP=false` disables stripping just
+  as `NO_STRIP=true` does — verified. There is no way to re-enable stripping
+  from the environment once the variable is set, which is why it is left out of
+  `run-tauri.mjs` rather than applied automatically. CI runners on older images
+  do not need it and should not set it.
+
+Leave `"targets": "all"` in `tauri.conf.json` alone — that setting is what will
+give the Windows and macOS runners their bundles.
+
+Two adjacent flags, since they are easy to confuse:
 
 - `--bundles deb,rpm,appimage` picks which bundlers run. `--bundles appimage`
-  is how you retry only the failing one after changing the toolchain.
+  retries just that one.
 - `--no-bundle` skips bundling **entirely**. It does not produce an AppImage —
-  it leaves just the release binary at
-  `apps/tauri/src-tauri/target/release/app`. It is the right flag when you want
-  a runnable build without touching any bundler, and the wrong one if an
+  it leaves the release binary at `apps/tauri/src-tauri/target/release/app`.
+  Right flag for a runnable build without touching any bundler; wrong one if an
   AppImage is the goal.
-
-To actually get an AppImage on a host where `linuxdeploy` fails, the options are
-to build in a container with an older toolchain (which is what CI will do), or
-to package the `--no-bundle` binary with a different tool such as
-`appimagetool`. Neither needs a config change.
 
 The scaffold deliberately keeps every other Tauri target reachable, roughly in
 this planned order:
