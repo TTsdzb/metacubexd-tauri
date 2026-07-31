@@ -104,68 +104,59 @@ CI now builds all three platforms on every tagged release (see
 special setup.
 
 CI's Linux runner is pinned to `ubuntu-22.04` rather than `ubuntu-latest`, and
-deliberately so: it sets the glibc floor for the resulting `.deb`/`.rpm`/
-AppImage, and its binutils `strip` is old enough that the AppImage step builds
-without the `NO_STRIP` workaround below. GitHub begins deprecating
-`ubuntu-22.04` runners on 2026-09-17; migrating off it needs both of those
-reasons re-checked against the newer image, not a blind version bump. One
-caveat on the strip claim: `verify-tauri.yml` builds with `--no-bundle`, so no
-bundler — AppImage included — actually runs on every push. The first real test
-of "AppImage builds without `NO_STRIP` on `ubuntu-22.04`" in CI is the first
-release tag, when `release-tauri.yml`'s Linux leg bundles for real.
+deliberately so: it sets the glibc floor for the resulting `.deb`/`.rpm`. GitHub
+begins deprecating `ubuntu-22.04` runners on 2026-09-17; migrating off it means
+re-checking that floor against the newer image, not a blind version bump.
 
-### AppImage needs `NO_STRIP=true` on a rolling-release host
+### No AppImage, deliberately
 
-```bash
-NO_STRIP=true pnpm build:tauri
-```
+`bundle.targets` lists `deb`, `rpm`, `msi`, `nsis`, `app`, and `dmg` — not
+`appimage`, and not `all`.
 
-Without it the AppImage step fails and takes the whole build's exit code with
-it:
+An AppImage bundles GTK and WebKitGTK inside itself but still uses the _host's_
+GL/EGL driver, and that split breaks on NVIDIA. Measured here, on the same
+machine, same commit:
 
-```
-ERROR: Strip call failed: .../strip: .../libzstd.so.1:
-       unknown type [0x13] section `.relr.dyn'
-failed to bundle project: `failed to run linuxdeploy`
-```
+| Artifact                                 | Result                                                                               |
+| ---------------------------------------- | ------------------------------------------------------------------------------------ |
+| `.deb` / plain binary (system WebKit)    | works                                                                                |
+| AppImage built in CI (ubuntu-22.04 libs) | renders, but freezes on focusing a text input; degraded performance                  |
+| AppImage built locally (host libs)       | blank white window, `Failed to create GBM buffer of size 1280x800: Invalid argument` |
 
-`linuxdeploy` bundles an old binutils `strip` that does not understand the
-`.relr.dyn` relocation sections current system libraries carry. `NO_STRIP` skips
-that pass. Verified working here: it produces a runnable
-`MetaCubeXD_<version>_amd64.AppImage`, where `<version>` is the Tauri shell's own
-version (`apps/tauri/src-tauri/tauri.conf.json`, or the tag in CI) — the shell
-is versioned independently of the dashboard now, so quoting a specific number
-here would only go stale again.
+Bundling _newer_ libraries made it worse, so this is not a stale-library problem
+that a newer runner would fix. `WEBKIT_DISABLE_DMABUF_RENDERER=1` and
+`WEBKIT_DISABLE_COMPOSITING_MODE=1` both failed to help.
 
-Two things to know before reaching for it:
+The deeper reason to drop it is that an AppImage reintroduces exactly what this
+fork left Electron to avoid. Tauri is worth having because it uses the system
+webview; an AppImage carries its own, at 82-100 MB against the deb's 7.8 MB. A
+bundled-webview artifact that is also broken on common hardware is not a trade
+worth making.
 
-- **It costs size.** Skipping the strip pass leaves the bundled WebKitGTK
-  libraries unstripped, which is most of why the AppImage lands at ~100 MB
-  against the deb's 7.8 MB.
-- **It keys on presence, not value.** `NO_STRIP=false` disables stripping just
-  as `NO_STRIP=true` does — verified. There is no way to re-enable stripping
-  from the environment once the variable is set, which is why it is left out of
-  `run-tauri.mjs` rather than applied automatically. CI runners on older images
-  do not need it and should not set it.
+Consequences, all good ones:
 
-Leave `"targets": "all"` in `tauri.conf.json` alone — that setting is what
-gives the Windows and macOS runners their bundles in `release-tauri.yml`.
+- `pnpm build:tauri` needs no environment variables. The `NO_STRIP=true`
+  workaround existed only because `linuxdeploy` ships a binutils `strip` too old
+  for the `.relr.dyn` sections in current system libraries — no AppImage, no
+  `linuxdeploy`, no workaround.
+- Linux users on distros without `.deb`/`.rpm` have no prebuilt artifact. The
+  binary at `target/release/app` is self-contained apart from system WebKitGTK,
+  so `--no-bundle` plus `tauri-action`'s `uploadPlainBinary` would cover them if
+  that ever matters.
 
-Two adjacent flags, since they are easy to confuse:
+Two adjacent CLI flags, since they are easy to confuse:
 
-- `--bundles deb,rpm,appimage` picks which bundlers run. `--bundles appimage`
-  retries just that one.
-- `--no-bundle` skips bundling **entirely**. It does not produce an AppImage —
-  it leaves the release binary at `apps/tauri/src-tauri/target/release/app`.
-  Right flag for a runnable build without touching any bundler; wrong one if an
-  AppImage is the goal.
+- `--bundles deb,rpm` picks which of the configured bundlers run.
+- `--no-bundle` skips bundling **entirely**, leaving just the release binary at
+  `apps/tauri/src-tauri/target/release/app`. That is what `verify-tauri.yml`
+  uses, since compiling is the point there and packaging is not.
 
 The scaffold deliberately keeps every other Tauri target reachable. Of the
 three milestones originally planned here, two are now done:
 
 1. ~~GitHub Actions release workflow~~ — done; see [Releasing](#releasing).
-2. ~~Windows and macOS bundles~~ — done (`"targets": "all"` already covered
-   them; `release-tauri.yml` now builds all three platforms on every tag push).
+2. ~~Windows and macOS bundles~~ — done; `release-tauri.yml` builds all three
+   platforms on every tag push.
 3. **Android** — the remaining item: `tauri android init`, then `tauri android
 dev`.
 
@@ -213,8 +204,8 @@ git push origin tauri-v0.2.0
 ```
 
 The workflow gates on `pnpm typecheck` and the test suites, then builds on
-three runners and attaches seven artifacts to a **draft** GitHub Release:
-`.deb`/`.rpm`/`.AppImage`, `.msi`/`.exe`, and macOS's universal `.dmg` plus the
+three runners and attaches six artifacts to a **draft** GitHub Release:
+`.deb`/`.rpm`, `.msi`/`.exe`, and macOS's universal `.dmg` plus the
 `.app.tar.gz` tarball `tauri-action` uploads alongside it
 (`MetaCubeXD_<version>_universal.app.tar.gz`). That tarball is expected, not a
 bug. Write the notes, then publish it.
@@ -227,7 +218,7 @@ just an extra download.
 
 **A failed leg is expected sometimes, not a broken run.** `release-tauri.yml`
 sets `fail-fast: false` so the other two platforms still build and upload even
-if one fails, so a draft release carrying only some of the seven artifacts is
+if one fails, so a draft release carrying only some of the six artifacts is
 normal, not a sign the whole pipeline is broken. To retry: delete the draft
 release, delete the tag both locally (`git tag -d tauri-v0.2.0-rc1`) and on the
 remote (`git push origin :tauri-v0.2.0-rc1`), fix the problem, and push a new
