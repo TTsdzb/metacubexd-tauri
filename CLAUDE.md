@@ -23,13 +23,14 @@ pnpm 10 workspace (Node 24, corepack). All dependency versions come from the
 single `catalog:` in `pnpm-workspace.yaml` — add versions there, not in package
 manifests.
 
-| Workspace                | Responsibility                                                                                           |
-| ------------------------ | -------------------------------------------------------------------------------------------------------- |
-| `packages/ui`            | Nuxt 4 / Vue 3 dashboard shared by every runtime form                                                    |
-| `packages/agent`         | Framework-neutral Control API (h3 router), profile store, kernel supervisor, scheduler, shared types     |
-| `packages/config-editor` | Pure YAML config document model: parse, diagnostics, `ConfigPatchV1`; used by both agent and UI          |
-| `apps/server`            | Nitro all-in-one server that serves the UI and mounts the agent router                                   |
-| `apps/desktop`           | Electron shell, loopback control server, OS integration, privileged TUN helper, bundled-kernel packaging |
+| Workspace                 | Responsibility                                                                                                                                                                                                                   |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/ui`             | Nuxt 4 / Vue 3 dashboard shared by every runtime form                                                                                                                                                                            |
+| `packages/agent`          | Framework-neutral Control API (h3 router), profile store, kernel supervisor, scheduler, shared types                                                                                                                             |
+| `packages/config-editor`  | Pure YAML config document model: parse, diagnostics, `ConfigPatchV1`; used by both agent and UI                                                                                                                                  |
+| `apps/tauri`              | Tauri v2 desktop shell being built in this fork; the only `apps/*` directory in the workspace                                                                                                                                    |
+| `apps/server` (excluded)  | Nitro all-in-one server that serves the UI and mounts the agent router. Not a workspace member — files stay on disk untouched so upstream merges stay clean, but nothing installs or builds it                                   |
+| `apps/desktop` (excluded) | Electron shell, loopback control server, OS integration, privileged TUN helper, bundled-kernel packaging. Not a workspace member — files stay on disk untouched so upstream merges stay clean, but nothing installs or builds it |
 
 Do not move host-specific behavior into `packages/ui`. Reusable lifecycle,
 profile, and Control API behavior belongs in `packages/agent`; Docker/Nitro
@@ -39,23 +40,27 @@ wiring in `apps/server`; Electron/OS wiring in `apps/desktop`.
 
 Run from the repository root unless noted.
 
+> `apps/server` and `apps/desktop` are excluded from the pnpm workspace (see
+> Workspace map above) but their files remain on disk. GitHub Actions
+> workflows, `apps/server/Dockerfile`, and `release-please-config.json` still
+> reference those workspaces and will fail confusingly if invoked — fixing
+> them belongs to the deferred CI/release milestone, planned after the basic
+> Tauri app works.
+
 ```bash
 pnpm install
 pnpm dev            # alias for dev:ui — Nuxt panel only, connect to an existing Mihomo
-pnpm dev:server     # generate the UI, then start Nitro dev
-pnpm dev:desktop    # fetch Mihomo, then Nuxt + Electron with renderer HMR
+pnpm dev:tauri      # build the shim, then run the Tauri dev shell (Nuxt HMR + Rust)
 pnpm build:ui       # nuxt generate -> packages/ui/.output/public
-pnpm build:server   # Nitro + agent only (does NOT build the UI)
-pnpm build:desktop  # electron-vite bundles only; does NOT produce installers
-pnpm build          # build:ui, then build:server
+pnpm build:tauri    # build the shim, then `tauri build`
+pnpm build          # alias for build:tauri
 pnpm typecheck      # pnpm -r typecheck
 pnpm lint           # pnpm -r lint; currently UI only, and it runs eslint --fix
 ```
 
-Desktop installers additionally need renderer generation/copy, kernel staging,
-and `electron-builder`; `.github/workflows/release.yml` is the source of truth.
-The `@metacubexd/desktop package` script only invokes `electron-builder` and
-assumes those prerequisites exist.
+The Electron desktop installer flow (renderer generation/copy, kernel
+staging, `electron-builder`, and `.github/workflows/release.yml`) belongs to
+the excluded `apps/desktop` app and is not built by this fork.
 
 ### Tests
 
@@ -64,8 +69,7 @@ pnpm --filter @metacubexd/ui test:unit          # vitest, excludes e2e/
 pnpm --filter @metacubexd/ui test:e2e           # needs: pnpm --filter @metacubexd/ui exec playwright install chromium
 pnpm --filter @metacubexd/agent test
 pnpm --filter @metacubexd/config-editor test
-pnpm --filter @metacubexd/server test
-pnpm --filter @metacubexd/desktop test
+pnpm --filter @metacubexd/tauri test
 ```
 
 Single test file or single case:

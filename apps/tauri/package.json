@@ -1,0 +1,27 @@
+{
+  "name": "@metacubexd/tauri",
+  "version": "1.270.6",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build-shim.mjs && node run-tauri.mjs build",
+    "build:shim": "node build-shim.mjs",
+    "dev": "node build-shim.mjs && node run-tauri.mjs dev",
+    "tauri": "node run-tauri.mjs",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "catalog:",
+    "@tauri-apps/plugin-http": "catalog:",
+    "@tauri-apps/plugin-websocket": "catalog:"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "catalog:",
+    "@types/node": "catalog:",
+    "esbuild": "catalog:",
+    "jsdom": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

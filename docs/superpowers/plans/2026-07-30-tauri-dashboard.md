@@ -225,7 +225,13 @@ Then confirm the workspace members are exactly the expected set:
 
 Run: `pnpm ls -r --depth -1`
 
-Expected: entries for `metacubexd-monorepo`, `@metacubexd/config-editor`, `@metacubexd/tauri`, and `@metacubexd/ui`, and **no** entry for `@metacubexd/desktop` or `@metacubexd/server`.
+Expected: entries for `metacubexd-monorepo`, `@metacubexd/agent`, `@metacubexd/config-editor`, `@metacubexd/tauri`, and `@metacubexd/ui`, and **no** entry for `@metacubexd/desktop` or `@metacubexd/server`.
+
+`@metacubexd/agent` stays a workspace member: only the `apps/*` glob narrows, and
+`packages/*` still matches it. That is deliberate — its dependencies are three
+small catalog entries already in the tree (`h3`, `yaml`, `tree-kill`), so
+excluding it would buy nothing and would add merge surface if upstream ever
+makes `packages/ui` depend on it. Nothing builds it.
 
 - [ ] **Step 9: Commit**
 
@@ -383,9 +389,19 @@ import { createFetch } from '../fetch'
 // has to satisfy the import.
 vi.mock('@tauri-apps/plugin-http', () => ({ fetch: vi.fn() }))
 
+// The parameters are declared, and unused, so vitest infers a two-argument
+// signature. With a zero-argument implementation `Mock['calls']` types as
+// `[][]`, and the `calls[0]?.[0]` assertion below then fails to compile with
+// TS2493 — a tuple-arity error no strictness flag controls.
 function transports() {
-  const webview = vi.fn(async () => new Response('webview'))
-  const native = vi.fn(async () => new Response('native'))
+  const webview = vi.fn(
+    async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      new Response('webview'),
+  )
+  const native = vi.fn(
+    async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      new Response('native'),
+  )
   return { webview, native, patched: createFetch(webview, native) }
 }
 
@@ -488,6 +504,13 @@ Run: `pnpm --filter @metacubexd/tauri exec vitest run shim/__tests__/fetch.spec.
 
 Expected: PASS — 5 passed.
 
+Then typecheck, because vitest transpiles without checking types and this spec
+indexes into `Mock['calls']`:
+
+Run: `pnpm --filter @metacubexd/tauri typecheck`
+
+Expected: no output, exit 0.
+
 - [ ] **Step 5: Commit**
 
 ```bash
@@ -560,7 +583,9 @@ describe('createWebSocketClass', () => {
     const connect = vi.fn(async () => socket)
     const Ctor = createWebSocketClass(connect)
 
-    new Ctor('ws://192.168.1.5:9090/logs?token=abc')
+    // `void` because the repo's eslint config enforces `no-new`, and this
+    // construction is wanted purely for its side effect.
+    void new Ctor('ws://192.168.1.5:9090/logs?token=abc')
     await settle()
 
     expect(connect).toHaveBeenCalledWith('ws://192.168.1.5:9090/logs?token=abc')
@@ -714,7 +739,7 @@ Create `apps/tauri/shim/websocket.ts`:
 ```ts
 import PluginWebSocket from '@tauri-apps/plugin-websocket'
 
-/** The frame shape `tauri-plugin-websocket` pushes up its channel. */
+/** The *tagged* frame shape `tauri-plugin-websocket` pushes up its channel. */
 export type Message =
   | { type: 'Text'; data: string }
   | { type: 'Binary'; data: number[] }
@@ -722,9 +747,26 @@ export type Message =
   | { type: 'Pong'; data: number[] }
   | { type: 'Close'; data: { code: number; reason: string } | null }
 
+/**
+ * Everything the plugin can actually deliver.
+ *
+ * Only *successful* frames get an envelope. The Rust read loop converts a read
+ * error with `serde_json::to_value(Error::from(e))`, and `Error`'s `Serialize`
+ * impl is `serialize_str`, so an error arrives as a bare JSON string. A
+ * `Message::Frame(_)` maps to `null`.
+ *
+ * This is not an edge case: Mihomo dies by process exit with no close
+ * handshake, so tokio-tungstenite yields `Err(...)` rather than
+ * `Ok(Message::Close(..))`. The untagged payload is the PRIMARY termination
+ * path, and the plugin's own TypeScript types do not describe it — which is
+ * why `#receive` must treat anything untagged as an abnormal close (1006)
+ * rather than switching on `type` alone.
+ */
+export type Incoming = Message | string | null
+
 /** The slice of the plugin's socket this adapter drives. */
 export interface PluginSocket {
-  addListener: (cb: (msg: Message) => void) => () => void
+  addListener: (cb: (msg: Incoming) => void) => () => void
   send: (message: string) => Promise<void>
   disconnect: () => Promise<void>
 }
@@ -809,8 +851,20 @@ export function createWebSocketClass(
       this.onopen?.(new Event('open'))
     }
 
-    #receive(message: Message): void {
+    #receive(message: Incoming): void {
       if (this.readyState !== OPEN) return
+
+      // Untagged payload: the plugin's error channel (a bare string) or a raw
+      // Frame (null). This is how a Mihomo restart actually reaches us, since
+      // the kernel exits without a close handshake — so report it as an
+      // abnormal close and let the UI's reconnect-with-backoff take over.
+      // Falling through the switch instead would leave readyState OPEN and
+      // freeze every stream until the user reloads.
+      if (typeof message !== 'object' || message === null) {
+        this.onerror?.(new Event('error'))
+        this.#finish(1006, message === null ? '' : String(message))
+        return
+      }
 
       switch (message.type) {
         case 'Text':
@@ -831,6 +885,10 @@ export function createWebSocketClass(
         case 'Ping':
         case 'Pong':
           break
+        default:
+          // An unrecognized tag must not silently freeze the socket either.
+          this.onerror?.(new Event('error'))
+          this.#finish(1006, '')
       }
     }
 
@@ -1250,6 +1308,25 @@ Expected: FAIL — `Failed to resolve import "../drag"`.
 
 - [ ] **Step 3: Write the implementation**
 
+> **SUPERSEDED — do not reproduce the block below verbatim.** Review found two
+> defects in it, both fixed in commit `512bd9b4`; read
+> `apps/tauri/shim/drag.ts` for the correct implementation.
+>
+> 1. **Double-click-to-maximize was broken by construction.** `startDragging()`
+>    hands the pointer to the window manager, which enters a modal move loop and
+>    swallows the mouseup — so no `click`, and therefore no `dblclick`.
+>    `TitleBar.vue`'s `@dblclick` handler became dead code on Windows and Linux.
+>    Tauri's own drag script (vendored at
+>    `tauri-2.11.3/src/window/scripts/drag.js`) branches on `e.detail === 2` to
+>    toggle maximize instead of dragging; the fix mirrors that.
+> 2. **The raw-attribute read may never match.** Vue's compiler rewrites a static
+>    `style="..."` into a style object prop, and `runtime-dom`'s `setStyle`
+>    applies it through the CSSOM — it never calls `setAttribute`. So if
+>    WebKitGTK really drops the unrecognized property, the attribute never
+>    materializes and this module is a silent no-op. The fix reads both sources.
+>    The specs missed it because the fixture builds DOM with `innerHTML`, which
+>    does set the attribute — a construction path the real app never uses.
+
 Create `apps/tauri/shim/drag.ts`:
 
 ```ts
@@ -1546,6 +1623,22 @@ The scaffold is **generated**, not hand-written, so it carries everything the mo
 - Regenerate: `apps/tauri/src-tauri/icons/*`
 
 - [ ] **Step 1: Generate the scaffold**
+
+> **Clear `src-tauri/` first, or this step silently does nothing.** Task 7's
+> `build-shim.mjs` writes `src-tauri/shim.js`, and esbuild creates the parent
+> directory to do it. `tauri init` refuses a non-empty target — it prints
+> `Tauri dir ("…/src-tauri") not empty. Run 'init --force' to overwrite.` and
+> **exits 0 having scaffolded nothing**. The whole task would then appear to
+> succeed while every later step edits files that do not exist.
+>
+> `shim.js` is gitignored build output regenerated by every dev and build run,
+> so deleting it costs nothing:
+>
+> ```bash
+> rm -rf apps/tauri/src-tauri
+> ```
+>
+> Run that first, then `tauri init`, then regenerate the shim in Step 9.
 
 Non-interactive, with the dev/build wiring passed as flags. Run from the repo root:
 
@@ -1926,6 +2019,24 @@ The title bar is already handled: the bridge's `isDesktop` comes from Rust's
 neither the desktop title bar nor its window controls.
 
 Also not done: tray icon, launch-at-login (both desktop-only).
+
+## Known limitation: WebSocket connections leak on reload
+
+Reloading the window orphans its four Clash API sockets on the Rust side.
+`tauri-plugin-websocket` removes a connection from its `ConnectionManager` only
+on a clean `Ok(Message::Close(_))`, and its read loop discards the channel-send
+error, so when the document tears down the JS adapters die while the Rust
+connections keep reading from Mihomo. `useWebSocket.ts` relies on
+`onScopeDispose`, which does not fire on document teardown.
+
+Each reload strands four connections, one of which pulls the full connection
+table every second. Harmless in a short session, accumulating over a long one —
+and most visible under `tauri dev`.
+
+Fixing it needs a registry of live adapters in `websocket.ts` plus a `pagehide`
+hook in `install()`. The open question is whether the resulting async IPC even
+completes during teardown, so the fix may be best-effort rather than complete.
+Deliberately deferred, not overlooked.
 ````
 
 - [ ] **Step 5: Add the upstream remote**
