@@ -233,6 +233,18 @@ release, delete the tag both locally (`git tag -d tauri-v0.2.0-rc1`) and on the
 remote (`git push origin :tauri-v0.2.0-rc1`), fix the problem, and push a new
 tag — `rc1` → `rc2`, or drop `-rc` once it is clean.
 
+**If you ever see _two_ draft releases for one tag**, that is a known race, not
+corruption. All three legs call `tauri-action` with the same `tagName`, and its
+`getOrCreateRelease` has no locking: it lists releases, finds none matching, and
+creates one. GitHub permits several drafts sharing a tag, so two legs finishing
+within the same moment could each create one, splitting the artifacts between
+them. The build durations differ by many minutes, and the `tauri-v0.0.1-rc1`
+live-fire run produced exactly one draft — which is why this is left alone
+rather than pre-emptively engineered around. If it does happen: delete both
+drafts and re-tag. The durable fix is to create the release in the `gate` job
+and pass `releaseId` to the matrix, which is what `tauri-action`'s own
+`publish-to-manual-release` example does.
+
 A tag containing `-rc` is marked as a prerelease, so `tauri-v0.2.0-rc1` is the
 way to exercise the pipeline without announcing anything.
 
