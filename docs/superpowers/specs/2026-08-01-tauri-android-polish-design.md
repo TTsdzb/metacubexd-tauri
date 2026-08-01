@@ -1,6 +1,7 @@
 # Tauri Android Packaging Polish -- Design
 
 Date: 2026-08-01
+Updated: 2026-08-02
 Status: Approved
 
 ## Goal
@@ -16,7 +17,8 @@ dashboard UI is unchanged.
 In scope:
 
 1. Replace the generated Android project's default launcher resources with the
-   existing MetaCubeXD black hexagon icon set.
+   existing MetaCubeXD black hexagon icon set, then keep the adaptive foreground
+   inside the Android safe zone.
 2. Apply Android system-bar and display-cutout insets to the Tauri content root
    so controls are not obscured.
 3. Add an explicit signed arm64 APK build alongside the signed universal APK.
@@ -40,6 +42,14 @@ Out of scope:
 from the desktop `icon.png`. The initialized Android project under
 `gen/android/app/src/main/res` still contains its default launcher images and
 default adaptive-icon drawables, so Android packages those instead.
+
+After synchronizing those resources, physical-device testing found a second,
+independent issue. The conventional launcher PNG uses reasonable internal
+padding, but Android 26 and later selects the adaptive icon. Tauri's generated
+adaptive foreground fills approximately 95--100% of its 108 dp layer, while
+Android guarantees only the centered 66 dp safe zone and displays a 72 dp
+masked viewport. The black hexagon therefore appears vertically edge-to-edge
+after launcher masking.
 
 ### System-Bar Overlap
 
@@ -67,6 +77,25 @@ adaptive launcher resources already represented under `icons/android`.
 
 Commit the generated Android resources. Do not introduce a second icon source
 or hand-maintained vector approximation.
+
+### Adaptive Icon Scale
+
+Keep the conventional Android launcher PNGs and desktop icons unchanged. In
+both `icons/android` and the generated Android project, wrap the existing
+adaptive foreground bitmap in an inline inset drawable with 12 dp on all four
+sides. The resulting foreground is 84/108 dp, or 77.8% of the generated size,
+matching the physical-device comparison selected by the user.
+
+Change the adaptive background from white to the icon's existing light gray
+`#DADEDF`. The foreground bitmap already uses this color around the hexagon, so
+the inset boundary blends into the adaptive background rather than producing a
+white ring. The black hexagon, white strokes, and shadow remain untouched.
+
+This is an Android resource composition change, not a bitmap rewrite. It keeps
+the desktop `icon.png` as the single image source and avoids maintaining five
+density-specific resizes. A future `tauri icon` regeneration may overwrite the
+adaptive XML and background value, so the inset must be rechecked after icon
+regeneration.
 
 ### Window Insets
 
@@ -122,6 +151,8 @@ failures:
 1. Generated launcher images differ from `icons/android`.
 2. `MainActivity` enables edge-to-edge without applying `WindowInsetsCompat`.
 3. No arm64 release APK exists.
+4. The adaptive icon directly references the nearly full-size foreground and
+   uses a white background instead of a 12 dp inset over `#DADEDF`.
 
 After implementation:
 
@@ -134,11 +165,15 @@ After implementation:
 7. Parse the workflow YAML and run `actionlint` if available.
 8. Confirm `Keystore.jks` and `keystore.properties` remain ignored and
    untracked.
+9. Confirm both maintained adaptive-icon XML files use four 12 dp insets and
+   both background resources use `#DADEDF`.
 
-Visual device verification remains necessary later for exact launcher masking,
-status/navigation-bar appearance, rotation, cutouts, and gesture versus
-three-button navigation. The native inset implementation and APK contents can
-still be verified locally without a connected device.
+Physical-device testing on 2026-08-02 confirmed status-bar avoidance and basic
+Hosted Panel behavior. It also selected the 77.8% adaptive foreground after a
+comparison of the current, 88%, 78%, and 70% sizes. The rebuilt APK still needs
+one focused launcher check to confirm the selected inset matches the real
+device's mask. Rotation, display cutouts, and gesture versus three-button
+navigation remain useful broader coverage.
 
 ## Risks
 
@@ -149,6 +184,7 @@ still be verified locally without a connected device.
 | The second build overwrites the universal APK | Tauri's ABI flavor outputs use separate `universal/release` and `arm64/release` directories; assert both exact paths before upload. |
 | arm64 is mistaken for the compatibility build | Keep universal in the Release and document arm64 as the smaller optional download.                                                  |
 | Signing material leaks during build changes   | Reuse the current ignored properties and temporary CI keystore paths; verify neither file is tracked.                               |
+| Tauri icon regeneration removes the inset     | Keep the mirrored adaptive XML assertions and rerun them whenever `tauri icon` regenerates mobile resources.                        |
 
 ## Sources
 
@@ -160,3 +196,5 @@ still be verified locally without a connected device.
   <https://v2.tauri.app/distribute/google-play/>
 - Tauri icon generation:
   <https://v2.tauri.app/develop/icons/>
+- Android adaptive icon safe zone and inset guidance:
+  <https://developer.android.com/develop/ui/compose/system/icon_design_adaptive>
