@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -16,12 +18,7 @@ const PARITY_LOCALES = ['zh', 'ja', 'ko', 'fr', 'fa'] as const
 const ALL_LOCALES = ['zh', 'ru', 'ja', 'ko', 'fr', 'fa'] as const
 
 type JsonValue =
-  | string
-  | number
-  | boolean
-  | null
-  | JsonValue[]
-  | { [key: string]: JsonValue }
+  string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue }
 
 const readLocale = (code: string): Record<string, JsonValue> => {
   const raw = readFileSync(resolve(localesDir, `${code}.json`), 'utf8')
@@ -32,7 +29,7 @@ const flattenKeys = (obj: Record<string, JsonValue>, prefix = ''): string[] =>
   Object.entries(obj).flatMap(([key, value]) => {
     const path = prefix + key
     return value !== null && typeof value === 'object' && !Array.isArray(value)
-      ? flattenKeys(value as Record<string, JsonValue>, `${path  }.`)
+      ? flattenKeys(value as Record<string, JsonValue>, `${path}.`)
       : [path]
   })
 
