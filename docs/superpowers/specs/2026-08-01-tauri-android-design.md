@@ -22,7 +22,7 @@ In scope:
 3. Wire release-mode Android signing through a local/CI
    `gen/android/keystore.properties` file.
 4. Extend `release-tauri.yml` so `tauri-v*` tags upload a signed universal APK
-   to the same draft GitHub Release as the desktop installers.
+   alongside the desktop installers.
 5. Update `FORK.md` with the Android commands, secret names, and verification
    limits.
 
@@ -54,14 +54,16 @@ Out of scope:
 
 ## Decisions
 
-| Question                         | Decision                                                                                            | Rationale                                                                                                                                                                                         |
-| -------------------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Android artifact                 | Signed universal APK only                                                                           | Tauri supports APK output with `--apk`; without `--split-per-abi`, it creates a universal package. That is simplest for side-loading and avoids Play Store-only AAB ceremony.                     |
-| Where signing config lives       | `apps/tauri/src-tauri/gen/android/keystore.properties`, gitignored                                  | This is the path Tauri's Android signing guide uses. It references the real keystore location rather than containing the keystore itself.                                                         |
-| Keystore alias/password defaults | Alias `key0`, store password `123456`, key password `123456`                                        | The provided local keystore has a single `key0` entry. These values are documented as the user's local defaults, but CI still reads them from GitHub Secrets.                                     |
-| CI secret names                  | `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD` | Clear, conventional names. They keep the binary keystore and passwords outside the repository.                                                                                                    |
-| Root command surface             | Add Android convenience scripts at the root and in `apps/tauri`                                     | Existing fork commands are run from the repository root. Root scripts keep Android on the same path as `dev:tauri` and `build:tauri`.                                                             |
-| Android build environment in CI  | Dedicated Android release job                                                                       | `tauri-action` is already used for desktop bundles, but Android needs SDK/NDK setup, Rust Android targets, signing file generation, and artifact upload paths that are clearer as a separate job. |
+| Question                         | Decision                                                                                            | Rationale                                                                                                                                                                                      |
+| -------------------------------- | --------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Android artifact                 | Signed universal APK only                                                                           | Tauri supports APK output with `--apk`; without `--split-per-abi`, it creates a universal package. That is simplest for side-loading and avoids Play Store-only AAB ceremony.                  |
+| Where signing config lives       | `apps/tauri/src-tauri/gen/android/keystore.properties`, gitignored                                  | This is the path Tauri's Android signing guide uses. It references the real keystore location rather than containing the keystore itself.                                                      |
+| Keystore alias/password defaults | Alias `key0`, store password `123456`, key password `123456`                                        | The provided local keystore has a single `key0` entry. These values are documented as the user's local defaults, but CI still reads them from GitHub Secrets.                                  |
+| CI secret names                  | `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD` | Clear, conventional names. They keep the binary keystore and passwords outside the repository.                                                                                                 |
+| Root command surface             | Add Android convenience scripts at the root and in `apps/tauri`                                     | Existing fork commands are run from the repository root. Root scripts keep Android on the same path as `dev:tauri` and `build:tauri`.                                                          |
+| Release publishing               | Dedicated build jobs plus one publish job                                                           | Build jobs upload workflow artifacts only. One publish job creates the draft release and uploads everything, so no matrix leg races another to create the same draft.                          |
+| `tauri-action`                   | Remove it from this workflow                                                                        | Its useful extras here are artifact collection and release upload. Direct Tauri CLI builds plus `actions/upload-artifact` and `gh release` make the pipeline clearer and remove release races. |
+| Android build environment in CI  | Dedicated Android build job                                                                         | Android needs SDK/NDK setup, Rust Android targets, signing file generation, and APK artifact upload paths that are clearer outside the desktop matrix.                                         |
 
 ## Local Workflow
 
@@ -123,10 +125,21 @@ window controls. No UI changes are needed for this milestone.
 
 ## GitHub Actions
 
-`release-tauri.yml` gains an `android` job that depends on `gate`, uses
-`ubuntu-22.04`, and uploads to the draft release created by the desktop matrix.
+`release-tauri.yml` becomes a four-stage pipeline:
 
-The job flow:
+1. `gate` derives the tag version, typechecks, and runs tests.
+2. `build-desktop` matrix-builds Linux, Windows, and macOS, then uploads
+   workflow artifacts.
+3. `build-android` builds the signed universal APK, then uploads it as a
+   workflow artifact.
+4. `publish` downloads all workflow artifacts, creates exactly one draft GitHub
+   Release, and uploads every artifact to it.
+
+Build jobs do not create or mutate GitHub Releases. This removes the current
+duplicate-draft race from the workflow shape instead of documenting it as an
+acceptable rare outcome.
+
+The Android build job flow:
 
 1. Checkout, pnpm setup, Node setup, Rust stable setup with all four Android
    targets.
@@ -138,8 +151,13 @@ The job flow:
 6. Write `apps/tauri/src-tauri/gen/android/keystore.properties` from secrets.
 7. Run `pnpm --filter @metacubexd/tauri android:build`.
 8. Upload the generated `*.apk` files from
-   `apps/tauri/src-tauri/gen/android/app/build/outputs/apk/**` to the same
-   draft release.
+   `apps/tauri/src-tauri/gen/android/app/build/outputs/apk/**` as workflow
+   artifacts.
+
+The desktop build matrix follows the same publish boundary: run the direct
+Tauri CLI build command through `run-tauri.mjs`, collect installers and plain
+binaries from the Tauri target directory, then upload workflow artifacts. The
+final publish job alone runs `gh release create --draft` and `gh release upload`.
 
 The workflow does not upload AAB files. It also does not try to publish to
 Google Play.
@@ -165,12 +183,13 @@ not-run unless the sandbox permits ADB.
 
 ## Risks
 
-| Risk                                                                        | Mitigation                                                                                                                                                                                                                                        |
-| --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Gradle signing config fails when `keystore.properties` is absent            | Fail release builds loudly; document the local file and CI secrets. Debug builds do not need release signing.                                                                                                                                     |
-| Android SDK/NDK versions drift on GitHub runners                            | Pin or explicitly install the SDK/NDK versions used by the generated project where possible, and keep the workflow self-contained.                                                                                                                |
-| The generated Android project changes many files                            | Keep all generated Android files under `apps/tauri/src-tauri/gen/android`, which is fork-owned and isolated from upstream-owned UI code.                                                                                                          |
-| Desktop release race creates duplicate draft releases before Android upload | Existing `FORK.md` already documents the rare desktop race. The Android job should upload to the tag's draft release after desktop action runs; if upload lookup is ambiguous, document manual cleanup rather than adding a complex release lock. |
+| Risk                                                             | Mitigation                                                                                                                                                          |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Gradle signing config fails when `keystore.properties` is absent | Fail release builds loudly; document the local file and CI secrets. Debug builds do not need release signing.                                                       |
+| Android SDK/NDK versions drift on GitHub runners                 | Pin or explicitly install the SDK/NDK versions used by the generated project where possible, and keep the workflow self-contained.                                  |
+| The generated Android project changes many files                 | Keep all generated Android files under `apps/tauri/src-tauri/gen/android`, which is fork-owned and isolated from upstream-owned UI code.                            |
+| Release upload misses a generated desktop artifact               | Replace `tauri-action`'s artifact collection with explicit checks for the expected bundle paths per platform. Fail the build job if a required artifact is missing. |
+| A build job fails and no release is created                      | This is intentional. A `tauri-v*` tag should either produce one complete draft release or fail before publishing.                                                   |
 
 ## Sources
 
