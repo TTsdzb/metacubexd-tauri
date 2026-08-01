@@ -8,6 +8,8 @@
 
 **Tech Stack:** Tauri CLI 2.11.4, Kotlin/AndroidX Activity and Core View APIs, Gradle Android product flavors, pnpm 10, GitHub Actions, Android `apksigner`.
 
+**Updated:** 2026-08-02 after physical-device adaptive-icon testing.
+
 ## Global Constraints
 
 - Preserve `app-universal-release.apk` with all four supported Android ABIs.
@@ -19,6 +21,8 @@
 - Do not commit `Keystore.jks` or `apps/tauri/src-tauri/gen/android/keystore.properties`.
 - Build jobs upload Actions artifacts only; the dedicated `publish` job remains the sole GitHub Release writer.
 - Use the existing desktop `apps/tauri/src-tauri/icons/icon.png` as the single icon source.
+- Keep conventional Android and desktop icons unchanged; inset only the Android
+  26+ adaptive foreground by 12 dp on all sides over `#DADEDF`.
 
 ## File Map
 
@@ -420,3 +424,171 @@ git diff --stat origin/codex/tauri-android-apk...HEAD
 
 Expected: clean worktree; commits are limited to the design, launcher, inset,
 packaging/workflow, and documentation changes described by this plan.
+
+### Task 5: Fit the Adaptive Icon to Its Safe Zone
+
+**Files:**
+
+- Modify: `apps/tauri/src-tauri/icons/android/mipmap-anydpi-v26/ic_launcher.xml`
+- Modify: `apps/tauri/src-tauri/icons/android/values/ic_launcher_background.xml`
+- Modify: `apps/tauri/src-tauri/gen/android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml`
+- Modify: `apps/tauri/src-tauri/gen/android/app/src/main/res/values/ic_launcher_background.xml`
+
+**Interfaces:**
+
+- Consumes: the existing density-specific `@mipmap/ic_launcher_foreground`
+  bitmaps generated from the desktop `icon.png`.
+- Produces: mirrored adaptive-icon definitions that render the existing
+  foreground at 84/108 dp, or 77.8%, over a matching `#DADEDF` background.
+
+- [ ] **Step 1: Run the adaptive-resource contract and verify RED**
+
+Run:
+
+```bash
+node -e '
+  const fs = require("node:fs")
+  const pairs = [
+    [
+      "apps/tauri/src-tauri/icons/android/mipmap-anydpi-v26/ic_launcher.xml",
+      "apps/tauri/src-tauri/icons/android/values/ic_launcher_background.xml",
+    ],
+    [
+      "apps/tauri/src-tauri/gen/android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml",
+      "apps/tauri/src-tauri/gen/android/app/src/main/res/values/ic_launcher_background.xml",
+    ],
+  ]
+  for (const [iconPath, backgroundPath] of pairs) {
+    const icon = fs.readFileSync(iconPath, "utf8")
+    const background = fs.readFileSync(backgroundPath, "utf8")
+    for (const side of ["Top", "Right", "Bottom", "Left"]) {
+      if (!icon.includes(`android:inset${side}="12dp"`)) {
+        throw new Error(`${iconPath}: missing 12dp ${side.toLowerCase()} inset`)
+      }
+    }
+    if (!icon.includes("android:drawable=\"@mipmap/ic_launcher_foreground\"")) {
+      throw new Error(`${iconPath}: missing foreground bitmap reference`)
+    }
+    if (!background.includes(">#DADEDF</color>")) {
+      throw new Error(`${backgroundPath}: wrong adaptive background`)
+    }
+  }
+'
+```
+
+Expected: FAIL on the first missing `12dp` top inset because the adaptive icon
+still references the full-size foreground directly.
+
+- [ ] **Step 2: Record that conventional and desktop bitmap inputs are unchanged**
+
+Run:
+
+```bash
+sha256sum \
+  apps/tauri/src-tauri/icons/icon.png \
+  apps/tauri/src-tauri/icons/android/mipmap-*/ic_launcher.png \
+  apps/tauri/src-tauri/icons/android/mipmap-*/ic_launcher_foreground.png \
+  apps/tauri/src-tauri/icons/android/mipmap-*/ic_launcher_round.png \
+  apps/tauri/src-tauri/gen/android/app/src/main/res/mipmap-*/ic_launcher.png \
+  apps/tauri/src-tauri/gen/android/app/src/main/res/mipmap-*/ic_launcher_foreground.png \
+  apps/tauri/src-tauri/gen/android/app/src/main/res/mipmap-*/ic_launcher_round.png \
+  > /tmp/metacubexd-icon-hashes-before.txt
+```
+
+Expected: exit 0 and a nonempty hash file.
+
+- [ ] **Step 3: Inset both adaptive foreground definitions**
+
+Replace both `mipmap-anydpi-v26/ic_launcher.xml` files with:
+
+```xml
+<?xml version="1.0" encoding="utf-8"?>
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+  <foreground>
+    <inset
+      android:drawable="@mipmap/ic_launcher_foreground"
+      android:insetTop="12dp"
+      android:insetRight="12dp"
+      android:insetBottom="12dp"
+      android:insetLeft="12dp" />
+  </foreground>
+  <background android:drawable="@color/ic_launcher_background" />
+</adaptive-icon>
+```
+
+Replace both `values/ic_launcher_background.xml` files with:
+
+```xml
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <color name="ic_launcher_background">#DADEDF</color>
+</resources>
+```
+
+- [ ] **Step 4: Run the adaptive-resource and bitmap-preservation contracts and verify GREEN**
+
+Run the Step 1 Node assertion again.
+
+Expected: exit 0.
+
+Run the Step 2 `sha256sum` command again, changing the final path to
+`/tmp/metacubexd-icon-hashes-after.txt`, then run:
+
+```bash
+cmp /tmp/metacubexd-icon-hashes-before.txt /tmp/metacubexd-icon-hashes-after.txt
+```
+
+Expected: exit 0, proving no desktop or density-specific Android bitmap was
+rewritten.
+
+- [ ] **Step 5: Build both final signed APKs**
+
+Run:
+
+```bash
+ANDROID_HOME=/home/liusq/Android/Sdk \
+ANDROID_SDK_ROOT=/home/liusq/Android/Sdk \
+NDK_HOME=/home/liusq/Android/Sdk/ndk/29.0.13113456 \
+pnpm build:android
+
+ANDROID_HOME=/home/liusq/Android/Sdk \
+ANDROID_SDK_ROOT=/home/liusq/Android/Sdk \
+NDK_HOME=/home/liusq/Android/Sdk/ndk/29.0.13113456 \
+pnpm build:android:arm64
+```
+
+Expected: both commands exit 0 and recreate the universal and arm64 release
+APKs from the four updated XML resources.
+
+- [ ] **Step 6: Verify ABI contents, signatures, privacy, and scoped diff**
+
+Run:
+
+```bash
+universal=apps/tauri/src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk
+arm64=apps/tauri/src-tauri/gen/android/app/build/outputs/apk/arm64/release/app-arm64-release.apk
+
+unzip -Z1 "$universal" | rg '^lib/[^/]+/libapp_lib\.so$'
+unzip -Z1 "$arm64" | rg '^lib/[^/]+/libapp_lib\.so$'
+/home/liusq/Android/Sdk/build-tools/36.1.0/apksigner verify --print-certs "$universal"
+/home/liusq/Android/Sdk/build-tools/36.1.0/apksigner verify --print-certs "$arm64"
+git check-ignore -v Keystore.jks apps/tauri/src-tauri/gen/android/keystore.properties
+test -z "$(git ls-files -- Keystore.jks apps/tauri/src-tauri/gen/android/keystore.properties)"
+git diff --check
+git status --short
+```
+
+Expected: universal lists four ABIs; arm64 lists only arm64-v8a; both signer
+certificate SHA-256 digests match; signing files remain ignored and untracked;
+the tracked diff contains only the four XML files listed by this task.
+
+- [ ] **Step 7: Commit the adaptive icon fix**
+
+```bash
+git add \
+  apps/tauri/src-tauri/icons/android/mipmap-anydpi-v26/ic_launcher.xml \
+  apps/tauri/src-tauri/icons/android/values/ic_launcher_background.xml \
+  apps/tauri/src-tauri/gen/android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml \
+  apps/tauri/src-tauri/gen/android/app/src/main/res/values/ic_launcher_background.xml
+git commit -m "fix(android): inset adaptive launcher icon"
+```
