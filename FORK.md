@@ -185,8 +185,8 @@ milestones originally planned here, all are now done:
 1. ~~GitHub Actions release workflow~~ — done; see [Releasing](#releasing).
 2. ~~Windows and macOS bundles~~ — done; `release-tauri.yml` builds all three
    platforms on every tag push.
-3. ~~Android~~ — done; `pnpm dev:android` runs a device/emulator build and
-   `pnpm build:android` emits a signed release APK.
+3. ~~Android~~ — done; `pnpm dev:android` runs a device/emulator build, while
+   `pnpm build:android` and `pnpm build:android:arm64` emit signed release APKs.
 
 Nothing under `src-tauri/` should be deleted for being unused on Linux. The
 `lib.rs`/`main.rs` split, `#[cfg_attr(mobile, tauri::mobile_entry_point)]`, the
@@ -202,11 +202,18 @@ neither the desktop title bar nor its window controls.
 ### Android APK
 
 This fork intentionally ships Android as a personal APK, not an AAB/Google Play
-track. `pnpm build:android` runs `tauri android build --apk --ci`, so the
-expected local output is:
+track. Build the compatibility-first universal package with:
 
 ```text
+pnpm build:android
 apps/tauri/src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk
+```
+
+For modern arm64 devices, the smaller optional package is:
+
+```text
+pnpm build:android:arm64
+apps/tauri/src-tauri/gen/android/app/build/outputs/apk/arm64/release/app-arm64-release.apk
 ```
 
 Local release builds require the gitignored signing properties file that Tauri
@@ -275,11 +282,17 @@ The workflow gates on `pnpm typecheck` and the test suites, then runs dedicated
 artifacts, and a single `publish` job downloads the complete set and creates or
 updates a **draft** GitHub Release.
 
-The draft currently carries ten files: Linux `.deb`/`.rpm` plus
+The draft currently carries eleven files: Linux `.deb`/`.rpm` plus
 `app_linux_x64`, Windows `.msi`/NSIS `.exe` plus `app_windows_x64.exe`, macOS
 universal `.dmg` plus `MetaCubeXD_<version>_universal.app.tar.gz` and
-`app_darwin_universal`, and Android `app-universal-release.apk`. The macOS
-`.app.tar.gz` is expected, not a bug. Write the notes, then publish the draft.
+`app_darwin_universal`, and Android `app-universal-release.apk` (the
+compatibility-first package) plus `app-arm64-release.apk` (the smaller optional
+package for modern devices). The macOS `.app.tar.gz` is expected, not a bug.
+Write the notes, then publish the draft.
+
+Android launcher masking and status/navigation-bar insets still need physical
+device verification across rotation, display cutouts, gesture navigation, and
+three-button navigation.
 
 There is no auto-updater configured — `apps/tauri` has no updater plugin and
 `release-tauri.yml` does not upload `latest.json`. Nothing consumes the macOS
