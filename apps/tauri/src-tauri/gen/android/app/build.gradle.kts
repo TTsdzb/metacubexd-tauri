@@ -1,9 +1,34 @@
+import java.io.FileInputStream
 import java.util.Properties
 
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("rust")
+}
+
+val keystorePropertiesFile = rootProject.file("keystore.properties")
+val keystoreProperties = Properties()
+val hasReleaseSigning = keystorePropertiesFile.exists()
+
+if (hasReleaseSigning) {
+    FileInputStream(keystorePropertiesFile).use { keystoreProperties.load(it) }
+}
+
+fun requireKeystoreProperty(name: String): String =
+    keystoreProperties.getProperty(name)
+        ?: error("Missing Android signing property '$name' in ${keystorePropertiesFile.path}")
+
+fun releaseKeyPassword(): String =
+    keystoreProperties.getProperty("keyPassword") ?: requireKeystoreProperty("password")
+
+gradle.taskGraph.whenReady {
+    val needsReleaseSigning = allTasks.any { task ->
+        task.name.contains("Release", ignoreCase = true)
+    }
+    if (needsReleaseSigning && !hasReleaseSigning) {
+        error("Missing ${keystorePropertiesFile.path}; create it before building a release APK")
+    }
 }
 
 val tauriProperties = Properties().apply {
@@ -24,6 +49,16 @@ android {
         versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
         versionName = tauriProperties.getProperty("tauri.android.versionName", "1.0")
     }
+    signingConfigs {
+        if (hasReleaseSigning) {
+            create("release") {
+                keyAlias = requireKeystoreProperty("keyAlias")
+                keyPassword = releaseKeyPassword()
+                storeFile = file(requireKeystoreProperty("storeFile"))
+                storePassword = requireKeystoreProperty("password")
+            }
+        }
+    }
     buildTypes {
         getByName("debug") {
             applicationIdSuffix = ".debug"
@@ -39,6 +74,9 @@ android {
         }
         getByName("release") {
             isMinifyEnabled = true
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            }
             proguardFiles(
                 *fileTree(".") { include("**/*.pro") }
                     .plus(getDefaultProguardFile("proguard-android-optimize.txt"))
