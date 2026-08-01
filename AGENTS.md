@@ -140,8 +140,10 @@ CI is fork-owned:
 - `unit-tests.yml` runs JS suites, including the Tauri shim tests.
 - `e2e.yml` remains the upstream UI Playwright workflow.
 - `verify-tauri.yml` typechecks and compiles a Linux Tauri build.
-- `release-tauri.yml` builds desktop artifacts and a signed Android APK from
+- `release-tauri.yml` builds desktop artifacts and signed Android APKs from
   `tauri-v*` tags, then a dedicated publish job creates the draft GitHub Release.
+- `publish-stable-tauri.yml` publishes that draft after a successful stable-tag
+  run. Tags with a suffix, such as `-rc1`, remain drafts.
 - `stale.yml` is manual-only.
 
 Upstream `.github/workflows/release.yml` was deleted because it published to

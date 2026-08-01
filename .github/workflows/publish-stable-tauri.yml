@@ -1,0 +1,35 @@
+name: publish-stable-tauri
+
+on:
+  workflow_run:
+    workflows:
+      - release-tauri
+    types:
+      - completed
+
+jobs:
+  publish:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      startsWith(github.event.workflow_run.head_branch, 'tauri-v')
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+
+    steps:
+      - name: Publish stable release
+        env:
+          GH_REPO: ${{ github.repository }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ github.event.workflow_run.head_branch }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          version="${TAG_NAME#tauri-v}"
+          if [[ "$version" == *-* ]]; then
+            echo "Keeping prerelease $TAG_NAME as a draft."
+            exit 0
+          fi
+
+          gh release edit "$TAG_NAME" --draft=false --latest

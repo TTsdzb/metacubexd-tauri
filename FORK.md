@@ -252,13 +252,14 @@ Also not done: tray icon, launch-at-login (both desktop-only).
 CI is fork-owned. Upstream's `release.yml` was deleted — it published to
 `ghcr.io/metacubex/*` and `d.metacubex.one`, neither of which this fork owns.
 
-| Workflow            | Trigger        | Does                                                                  |
-| ------------------- | -------------- | --------------------------------------------------------------------- |
-| `unit-tests.yml`    | push, PR¹      | Upstream's JS suites, plus the Tauri suite                            |
-| `e2e.yml`           | push, PR¹      | Upstream's Playwright run against `packages/ui`                       |
-| `verify-tauri.yml`  | push, PR¹      | `typecheck` and a real Rust build                                     |
-| `release-tauri.yml` | `tauri-v*` tag | Builds desktop artifacts, Android APK, then publishes a draft release |
-| `stale.yml`         | manual only    | Upstream's issue bot; no longer on a cron                             |
+| Workflow                   | Trigger          | Does                                                                    |
+| -------------------------- | ---------------- | ----------------------------------------------------------------------- |
+| `unit-tests.yml`           | push, PR¹        | Upstream's JS suites, plus the Tauri suite                              |
+| `e2e.yml`                  | push, PR¹        | Upstream's Playwright run against `packages/ui`                         |
+| `verify-tauri.yml`         | push, PR¹        | `typecheck` and a real Rust build                                       |
+| `release-tauri.yml`        | `tauri-v*` tag   | Builds desktop artifacts and Android APKs, then creates a draft release |
+| `publish-stable-tauri.yml` | release workflow | Publishes successful stable-tag drafts; leaves RC drafts unpublished    |
+| `stale.yml`                | manual only      | Upstream's issue bot; no longer on a cron                               |
 
 ¹ "push" here means pushes to `main` only, not every branch — each of the
 three carries `branches: [main]` plus `paths-ignore: ['docs/**', '**.md']`, so
@@ -280,7 +281,9 @@ git push origin tauri-v0.2.0
 The workflow gates on `pnpm typecheck` and the test suites, then runs dedicated
 `build-desktop` and `build-android` jobs. Those jobs upload short-lived Actions
 artifacts, and a single `publish` job downloads the complete set and creates or
-updates a **draft** GitHub Release.
+updates a **draft** GitHub Release. After that workflow succeeds,
+`publish-stable-tauri.yml` publishes drafts for stable tags. Tags with a suffix,
+including release candidates, remain unpublished drafts.
 
 The draft currently carries eleven files: Linux `.deb`/`.rpm` plus
 `app_linux_x64`, Windows `.msi`/NSIS `.exe` plus `app_windows_x64.exe`, macOS
@@ -288,7 +291,8 @@ universal `.dmg` plus `MetaCubeXD_<version>_universal.app.tar.gz` and
 `app_darwin_universal`, and Android `app-universal-release.apk` (the
 compatibility-first package) plus `app-arm64-release.apk` (the smaller optional
 package for modern devices). The macOS `.app.tar.gz` is expected, not a bug.
-Write the notes, then publish the draft.
+Stable tags are published automatically with the generated notes; edit them on
+GitHub when a more detailed release description is useful.
 
 Android launcher masking and status/navigation-bar insets still need physical
 device verification across rotation, display cutouts, gesture navigation, and
