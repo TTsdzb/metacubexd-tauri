@@ -392,22 +392,77 @@ Known trade-off: the 5px border sits over the outermost sliver of any
 edge-flush scrollbar, so a press there starts a resize instead of a scroll.
 Narrow `BORDER` if that becomes annoying.
 
-### WebSocket connections leak on reload
+### WebSocket connections leak on reload — measured, and not fixable from JS
 
 Reloading the window orphans its four Clash API sockets on the Rust side.
 `tauri-plugin-websocket` removes a connection from its `ConnectionManager` only
-on a clean `Ok(Message::Close(_))`, and its read loop discards the channel-send
-error, so when the document tears down the JS adapters die while the Rust
-connections keep reading from Mihomo. `useWebSocket.ts` relies on
-`onScopeDispose`, which does not fire on document teardown.
+on a clean `Ok(Message::Close(_))`, and `useWebSocket.ts` relies on
+`onScopeDispose`, which does not fire on document teardown — so the JS adapters
+die with the page while the Rust connections keep reading from Mihomo.
 
-Each reload strands four connections, one of which pulls the full connection
-table every second. Harmless in a short session, accumulating over a long one —
-and most visible under `tauri dev`, where HMR reloads constantly. Fixing it
-needs a registry of live adapters in `shim/websocket.ts` plus a `pagehide` hook
-in `install()`; the open question is whether the resulting async IPC even
-completes during teardown, so the fix may be best-effort rather than complete.
-Deliberately deferred, not overlooked.
+Measured, rather than assumed. Counting established sockets to the backend
+(`ss -tnp | grep :9090 | grep -c "pid=<app>"`) across three reloads:
+
+```
+4 → 8 → 12 → 16
+```
+
+They never come back down. One of the four pulls the full connection table
+every second.
+
+**A JS-side fix was attempted and does not work.** Do not repeat it:
+
+1. A registry of live adapters in `shim/websocket.ts` plus a `closeAll()` called
+   from a `pagehide` handler in `install()`. The handler genuinely runs — a
+   `localStorage` probe written from inside it recorded `live before=4,
+after=0` — so all four sockets are closed on the JS side. The socket count
+   still went `4 → 8 → 12 → 16`.
+2. The reason: Tauri's IPC rides a custom-protocol `fetch`
+   (`tauri/scripts/ipc-protocol.js`, used on every platform except Android), and
+   a non-`keepalive` fetch is abortable when the document is destroyed. The
+   `plugin:websocket|send` carrying the close frame never leaves the webview.
+3. Adding `keepalive: true` to those requests during teardown — possible because
+   the shim owns `globalThis.fetch` and IPC passes through it — changed nothing.
+   Same `4 → 8 → 12 → 16`. WebKitGTK either does not honor it or it does not
+   apply here.
+
+What is left, neither cheap:
+
+- Give the shim its own Rust WebSocket plugin that owns connection lifecycle, so
+  teardown can be handled in `on_navigation` where no IPC is needed. The
+  upstream plugin's `ConnectionManager` is a private struct, so its state cannot
+  be reached from our plugin.
+- Fix it upstream, so the plugin retires a connection when its channel receiver
+  is gone rather than only on a received close frame.
+
+Note this is not the only leak of its kind: an abnormal close — a kernel
+restart, the common case — also leaves a `ConnectionManager` entry behind,
+because there is no close frame to retire it. That one strands connections
+without any reload at all.
+
+Practical impact is mostly at development time, where reloads are frequent.
+A packaged app that is opened and left running does not reload.
+
+### Seen once: an abort inside `Rc` on a tokio worker
+
+One dev session died with:
+
+```
+thread 'tokio-rt-worker' panicked at library/alloc/src/rc.rs:
+unsafe precondition(s) violated: hint::assert_unchecked must never be
+called when the condition is false
+thread caused non-unwinding panic. aborting.
+```
+
+It happened with no user interaction, has not recurred across many subsequent
+runs, and no backtrace was captured. `Rc` is not `Send`, and glib/GTK objects
+use exactly that kind of non-atomic refcount, so the shape suggests a GTK object
+touched off the main thread somewhere in Tauri, wry, or a plugin — long-standing
+UB that recent rustc versions detect rather than cause. The check is compiled in
+only under `debug_assertions`, so a release build would not abort on it.
+
+Not diagnosed. If it recurs, run with `RUST_BACKTRACE=full` and capture the
+stack before doing anything else.
 
 ### A latent window-state hazard: never set `"visible": false`
 
