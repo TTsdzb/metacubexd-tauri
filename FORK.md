@@ -220,9 +220,10 @@ keyPassword=123456
 storeFile=/absolute/path/to/Keystore.jks
 ```
 
-`Keystore.jks` and `keystore.properties` are signing material. Keep both private
-and never stage them. The checked-in Gradle config fails a release build early
-if `keystore.properties` is missing, and signs `release` when the file exists.
+`Keystore.jks` and `keystore.properties` are signing material. Both are
+gitignored; keep them private and never stage them. The checked-in Gradle config
+fails a release build early if `keystore.properties` is missing, and signs
+`release` when the file exists.
 
 CI reconstructs that same file from repository secrets:
 
