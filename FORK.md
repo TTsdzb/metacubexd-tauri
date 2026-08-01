@@ -28,14 +28,17 @@ kernel-management surface hides itself. That is the intended behavior here.
 pnpm install
 pnpm dev:tauri    # Nuxt dev + Tauri window, with HMR
 pnpm build:tauri  # release bundle in apps/tauri/src-tauri/target/release/bundle
+pnpm dev:android  # Android device/emulator dev build
+pnpm build:android # signed release APK
 pnpm dev          # plain browser dev, no Tauri
 ```
 
-Both Tauri scripts run `node apps/tauri/build-shim.mjs` first, which bundles
-`apps/tauri/shim/` into `apps/tauri/src-tauri/shim.js`. The release build's
-frontend comes from `tauri.conf.json`'s `beforeBuildCommand`, which invokes the
-UI's own `generate:desktop` script (relative base URL, PWA disabled) rather than
-plain `nuxt generate`.
+The desktop and Android Tauri dev/build scripts run
+`node apps/tauri/build-shim.mjs` first, which bundles `apps/tauri/shim/` into
+`apps/tauri/src-tauri/shim.js`. The release build's frontend comes from
+`tauri.conf.json`'s `beforeBuildCommand`, which invokes the UI's own
+`generate:desktop` script (relative base URL, PWA disabled) rather than plain
+`nuxt generate`.
 
 They also go through `apps/tauri/run-tauri.mjs` rather than calling the Tauri
 CLI directly. See below.
@@ -98,10 +101,10 @@ change that breaks the shell.
 
 ## Platform support
 
-CI now builds all three platforms on every tagged release (see
-[Releasing](#releasing)); Linux is what has been smoke-tested by hand so far.
-`pnpm build:tauri` produces a `.deb` and an `.rpm` (~7.8 MB each) with no
-special setup.
+CI now builds the three desktop platforms plus a signed Android APK on every
+tagged release (see [Releasing](#releasing)); Linux desktop is what has been
+smoke-tested by hand so far. `pnpm build:tauri` produces a `.deb` and an `.rpm`
+(~7.8 MB each) with no special setup.
 
 CI's Linux runner is pinned to `ubuntu-22.04` rather than `ubuntu-latest`, and
 deliberately so: it sets the glibc floor for the resulting `.deb`/`.rpm`. GitHub
@@ -144,17 +147,17 @@ Consequences, all good ones:
 
 ### Plain binaries ship alongside the installers
 
-`release-tauri.yml` sets `uploadPlainBinary: true`, so each release also carries
-the unpackaged executable: `app_linux_x64`, `app_windows_x64.exe`,
-`app_darwin_universal`. `tauri-action` injects the platform into the name for
-plain binaries specifically, so the three do not collide.
+`release-tauri.yml` calls the Tauri CLI through this fork's `run-tauri.mjs`
+wrapper and then copies the unpackaged executables itself: `app_linux_x64`,
+`app_windows_x64.exe`, and `app_darwin_universal`. The workflow names the files
+explicitly so the three do not collide.
 
 The Linux one is the point — it is what replaces the AppImage for distros with
 no `.deb`/`.rpm`, and it is self-contained apart from the system WebKitGTK the
 `.deb` would have depended on anyway.
 
-The other two come along because the flag is all-or-nothing across platforms,
-and both are worse than the installers next to them:
+The other two come along because the workflow already has the raw binaries at
+the end of each build, and both are worse than the installers next to them:
 
 - **Windows.** It runs only if the WebView2 runtime is already present —
   preinstalled on Windows 11, usually but not always on Windows 10. The NSIS
@@ -166,8 +169,8 @@ and both are worse than the installers next to them:
   macOS form.
 
 Neither is harmful — nobody reaches for a raw Mach-O with a `.dmg` beside it —
-but if they ever become clutter, delete them after upload rather than turning
-the flag off, since that would take the Linux binary with them.
+but if they ever become clutter, delete only the Windows and macOS copies before
+upload rather than dropping the Linux binary too.
 
 Two adjacent CLI flags, since they are easy to confuse:
 
@@ -176,14 +179,14 @@ Two adjacent CLI flags, since they are easy to confuse:
   `apps/tauri/src-tauri/target/release/app`. That is what `verify-tauri.yml`
   uses, since compiling is the point there and packaging is not.
 
-The scaffold deliberately keeps every other Tauri target reachable. Of the
-three milestones originally planned here, two are now done:
+The scaffold deliberately keeps every Tauri target reachable. Of the three
+milestones originally planned here, all are now done:
 
 1. ~~GitHub Actions release workflow~~ — done; see [Releasing](#releasing).
 2. ~~Windows and macOS bundles~~ — done; `release-tauri.yml` builds all three
    platforms on every tag push.
-3. **Android** — the remaining item: `tauri android init`, then `tauri android
-dev`.
+3. ~~Android~~ — done; `pnpm dev:android` runs a device/emulator build and
+   `pnpm build:android` emits a signed release APK.
 
 Nothing under `src-tauri/` should be deleted for being unused on Linux. The
 `lib.rs`/`main.rs` split, `#[cfg_attr(mobile, tauri::mobile_entry_point)]`, the
@@ -196,6 +199,44 @@ The title bar is already handled: the bridge's `isDesktop` comes from Rust's
 `cfg!(desktop)`, so an Android build reports false and `useDesktop()` renders
 neither the desktop title bar nor its window controls.
 
+### Android APK
+
+This fork intentionally ships Android as a personal APK, not an AAB/Google Play
+track. `pnpm build:android` runs `tauri android build --apk --ci`, so the
+expected local output is:
+
+```text
+apps/tauri/src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk
+```
+
+Local release builds require the gitignored signing properties file that Tauri
+expects:
+
+```properties
+# apps/tauri/src-tauri/gen/android/keystore.properties
+password=123456
+keyAlias=key0
+keyPassword=123456
+storeFile=/absolute/path/to/Keystore.jks
+```
+
+`Keystore.jks` and `keystore.properties` are signing material. Keep both private
+and never stage them. The checked-in Gradle config fails a release build early
+if `keystore.properties` is missing, and signs `release` when the file exists.
+
+CI reconstructs that same file from repository secrets:
+
+```text
+ANDROID_KEYSTORE_BASE64
+ANDROID_KEYSTORE_PASSWORD
+ANDROID_KEY_ALIAS
+ANDROID_KEY_PASSWORD
+```
+
+For the current fork key, `ANDROID_KEY_ALIAS=key0` and both passwords are
+`123456`. On Linux, generate `ANDROID_KEYSTORE_BASE64` with
+`base64 -w0 Keystore.jks`.
+
 Also not done: tray icon, launch-at-login (both desktop-only).
 
 ## Releasing
@@ -203,13 +244,13 @@ Also not done: tray icon, launch-at-login (both desktop-only).
 CI is fork-owned. Upstream's `release.yml` was deleted — it published to
 `ghcr.io/metacubex/*` and `d.metacubex.one`, neither of which this fork owns.
 
-| Workflow            | Trigger        | Does                                            |
-| ------------------- | -------------- | ----------------------------------------------- |
-| `unit-tests.yml`    | push, PR¹      | Upstream's JS suites, plus the Tauri suite      |
-| `e2e.yml`           | push, PR¹      | Upstream's Playwright run against `packages/ui` |
-| `verify-tauri.yml`  | push, PR¹      | `typecheck` and a real Rust build               |
-| `release-tauri.yml` | `tauri-v*` tag | Builds and publishes installers                 |
-| `stale.yml`         | manual only    | Upstream's issue bot; no longer on a cron       |
+| Workflow            | Trigger        | Does                                                                  |
+| ------------------- | -------------- | --------------------------------------------------------------------- |
+| `unit-tests.yml`    | push, PR¹      | Upstream's JS suites, plus the Tauri suite                            |
+| `e2e.yml`           | push, PR¹      | Upstream's Playwright run against `packages/ui`                       |
+| `verify-tauri.yml`  | push, PR¹      | `typecheck` and a real Rust build                                     |
+| `release-tauri.yml` | `tauri-v*` tag | Builds desktop artifacts, Android APK, then publishes a draft release |
+| `stale.yml`         | manual only    | Upstream's issue bot; no longer on a cron                             |
 
 ¹ "push" here means pushes to `main` only, not every branch — each of the
 three carries `branches: [main]` plus `paths-ignore: ['docs/**', '**.md']`, so
@@ -228,39 +269,35 @@ git tag tauri-v0.2.0
 git push origin tauri-v0.2.0
 ```
 
-The workflow gates on `pnpm typecheck` and the test suites, then builds on
-three runners and attaches eight artifacts to a **draft** GitHub Release:
-`.deb`/`.rpm`, `.msi`/`.exe`, and macOS's universal `.dmg` plus the
-`.app.tar.gz` tarball `tauri-action` uploads alongside it
-(`MetaCubeXD_<version>_universal.app.tar.gz`), plus the three plain binaries
-described under [Platform support](#platform-support). That tarball is expected, not a
-bug. Write the notes, then publish it.
+The workflow gates on `pnpm typecheck` and the test suites, then runs dedicated
+`build-desktop` and `build-android` jobs. Those jobs upload short-lived Actions
+artifacts, and a single `publish` job downloads the complete set and creates or
+updates a **draft** GitHub Release.
 
-There is no auto-updater configured — `release-tauri.yml` sets
-`uploadUpdaterJson: false` and `apps/tauri` has no updater plugin — which is
-worth saying precisely because `.app.tar.gz` is the format Tauri's updater
-expects for macOS. Nothing on either end consumes it today; it is currently
-just an extra download.
+The draft currently carries ten files: Linux `.deb`/`.rpm` plus
+`app_linux_x64`, Windows `.msi`/NSIS `.exe` plus `app_windows_x64.exe`, macOS
+universal `.dmg` plus `MetaCubeXD_<version>_universal.app.tar.gz` and
+`app_darwin_universal`, and Android `app-universal-release.apk`. The macOS
+`.app.tar.gz` is expected, not a bug. Write the notes, then publish the draft.
 
-**A failed leg is expected sometimes, not a broken run.** `release-tauri.yml`
-sets `fail-fast: false` so the other two platforms still build and upload even
-if one fails, so a draft release carrying only some of the eight artifacts is
-normal, not a sign the whole pipeline is broken. To retry: delete the draft
-release, delete the tag both locally (`git tag -d tauri-v0.2.0-rc1`) and on the
-remote (`git push origin :tauri-v0.2.0-rc1`), fix the problem, and push a new
-tag — `rc1` → `rc2`, or drop `-rc` once it is clean.
+There is no auto-updater configured — `apps/tauri` has no updater plugin and
+`release-tauri.yml` does not upload `latest.json`. Nothing consumes the macOS
+`.app.tar.gz` today; it is currently just an extra download.
 
-**If you ever see _two_ draft releases for one tag**, that is a known race, not
-corruption. All three legs call `tauri-action` with the same `tagName`, and its
-`getOrCreateRelease` has no locking: it lists releases, finds none matching, and
-creates one. GitHub permits several drafts sharing a tag, so two legs finishing
-within the same moment could each create one, splitting the artifacts between
-them. The build durations differ by many minutes, and the `tauri-v0.0.1-rc1`
-live-fire run produced exactly one draft — which is why this is left alone
-rather than pre-emptively engineered around. If it does happen: delete both
-drafts and re-tag. The durable fix is to create the release in the `gate` job
-and pass `releaseId` to the matrix, which is what `tauri-action`'s own
-`publish-to-manual-release` example does.
+**A failed build leg is expected sometimes, not a broken release.**
+`release-tauri.yml` sets `fail-fast: false` so the other builds can still finish
+and upload their temporary Actions artifacts, but the `publish` job waits for
+every required build. If any required build fails, no draft release is created.
+To retry a release candidate: delete the tag both locally
+(`git tag -d tauri-v0.2.0-rc1`) and on the remote
+(`git push origin :tauri-v0.2.0-rc1`), fix the problem, and push a new tag —
+`rc1` → `rc2`, or drop `-rc` once it is clean.
+
+The old draft-release race is gone. Earlier versions used `tauri-action` inside
+the desktop matrix, which let multiple jobs race to create a draft for the same
+tag. Now only the `publish` job has `contents: write` and only that job calls
+`gh release create`. If a draft already exists for the tag, it uploads the
+current artifacts with `gh release upload --clobber`.
 
 A tag containing `-rc` is marked as a prerelease, so `tauri-v0.2.0-rc1` is the
 way to exercise the pipeline without announcing anything.
@@ -277,10 +314,13 @@ deliberate: release-please would have written `CHANGELOG.md` and two
 `package.json` versions, every one of which upstream rewrites on its own
 release schedule, and every one of which would then conflict on merge.
 
-**Artifacts are unsigned.** macOS shows a Gatekeeper warning — right-click →
-Open, or `xattr -d com.apple.quarantine /Applications/MetaCubeXD.app`. Windows
-shows SmartScreen — More info → Run anyway. Adding signing later is
-configuration on `tauri-action`, not a redesign.
+**Desktop artifacts are unsigned.** macOS shows a Gatekeeper warning —
+right-click → Open, or
+`xattr -d com.apple.quarantine /Applications/MetaCubeXD.app`. Windows shows
+SmartScreen — More info → Run anyway. Android release APKs are signed with the
+configured keystore described under [Android APK](#android-apk). Adding desktop
+signing later is a bundler/secret configuration task, not a release topology
+redesign.
 
 **`pnpm-workspace.yaml` sets `shellEmulator: true`.** `packages/ui`'s
 `generate:desktop` script uses a POSIX inline env-var prefix (`FOO=bar cmd`)

@@ -28,7 +28,7 @@ manifests.
 | `packages/ui`             | Nuxt 4 / Vue 3 dashboard shared by every runtime form                                                                                                                                                                            |
 | `packages/agent`          | Framework-neutral Control API (h3 router), profile store, kernel supervisor, scheduler, shared types                                                                                                                             |
 | `packages/config-editor`  | Pure YAML config document model: parse, diagnostics, `ConfigPatchV1`; used by both agent and UI                                                                                                                                  |
-| `apps/tauri`              | Tauri v2 desktop shell being built in this fork; the only `apps/*` directory in the workspace                                                                                                                                    |
+| `apps/tauri`              | Tauri v2 shell for this fork's desktop bundles and personal Android APK; the only `apps/*` directory in the workspace                                                                                                            |
 | `apps/server` (excluded)  | Nitro all-in-one server that serves the UI and mounts the agent router. Not a workspace member — files stay on disk untouched so upstream merges stay clean, but nothing installs or builds it                                   |
 | `apps/desktop` (excluded) | Electron shell, loopback control server, OS integration, privileged TUN helper, bundled-kernel packaging. Not a workspace member — files stay on disk untouched so upstream merges stay clean, but nothing installs or builds it |
 
@@ -50,8 +50,10 @@ Run from the repository root unless noted.
 pnpm install
 pnpm dev            # alias for dev:ui — Nuxt panel only, connect to an existing Mihomo
 pnpm dev:tauri      # build the shim, then run the Tauri dev shell (Nuxt HMR + Rust)
+pnpm dev:android    # build the shim, then run the Android device/emulator dev shell
 pnpm build:ui       # nuxt generate -> packages/ui/.output/public
 pnpm build:tauri    # build the shim, then `tauri build`
+pnpm build:android  # build the shim, then emit a signed Android release APK
 pnpm build          # alias for build:tauri
 pnpm typecheck      # pnpm -r typecheck
 pnpm lint           # pnpm -r lint; currently UI only, and it runs eslint --fix
