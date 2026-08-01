@@ -13,6 +13,7 @@
     "build:ui": "pnpm --filter @metacubexd/ui generate",
     "build:tauri": "pnpm --filter @metacubexd/tauri build",
     "build:android": "pnpm --filter @metacubexd/tauri android:build",
+    "build:android:arm64": "pnpm --filter @metacubexd/tauri android:build:arm64",
     "generate": "pnpm build:ui && rm -rf .output && cp -r packages/ui/.output .output",
     "typecheck": "pnpm -r typecheck",
     "lint": "pnpm -r lint",

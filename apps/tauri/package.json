@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "android:build": "node build-shim.mjs && node run-tauri.mjs android build --apk --ci",
+    "android:build:arm64": "node build-shim.mjs && node run-tauri.mjs android build --apk --target aarch64 --split-per-abi --ci",
     "android:dev": "node build-shim.mjs && node run-tauri.mjs android dev",
     "android:init": "node run-tauri.mjs android init --ci --skip-targets-install",
     "build": "node build-shim.mjs && node run-tauri.mjs build",

@@ -273,18 +273,25 @@ jobs:
       - name: Build signed Android APK
         run: pnpm --filter @metacubexd/tauri android:build
 
+      - name: Build signed Android arm64 APK
+        run: pnpm --filter @metacubexd/tauri android:build:arm64
+
       - name: Collect Android release artifacts
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p release-artifacts
-          find apps/tauri/src-tauri/gen/android/app/build/outputs/apk -type f -name '*.apk' -exec cp {} release-artifacts/ \;
-          find release-artifacts -maxdepth 1 -type f -name '*.apk' -print -quit | grep -q .
+
+          universal="apps/tauri/src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk"
+          arm64="apps/tauri/src-tauri/gen/android/app/build/outputs/apk/arm64/release/app-arm64-release.apk"
+          test -f "$universal"
+          test -f "$arm64"
+          cp "$universal" "$arm64" release-artifacts/
           ls -lh release-artifacts
 
       - uses: actions/upload-artifact@v7
         with:
-          name: release-android-universal
+          name: release-android
           path: release-artifacts/*.apk
           if-no-files-found: error
           retention-days: 5
