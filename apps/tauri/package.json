@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "android:build": "node build-shim.mjs && node run-tauri.mjs android build --apk --ci",
+    "android:dev": "node build-shim.mjs && node run-tauri.mjs android dev",
+    "android:init": "node run-tauri.mjs android init --ci --skip-targets-install",
     "build": "node build-shim.mjs && node run-tauri.mjs build",
     "build:shim": "node build-shim.mjs",
     "dev": "node build-shim.mjs && node run-tauri.mjs dev",
