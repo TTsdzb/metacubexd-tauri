@@ -35,3 +35,6 @@ coverage
 
 # impeccable working dir (critique snapshots, render sidecar)
 .impeccable/
+
+# git worktrees (local dev isolation)
+.worktrees/
