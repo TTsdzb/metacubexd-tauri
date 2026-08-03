@@ -50,3 +50,6 @@ apps/tauri/src-tauri/gen/android/.gradle
 apps/tauri/src-tauri/gen/android/**/build
 apps/tauri/src-tauri/gen/android/local.properties
 apps/tauri/src-tauri/gen/android/keystore.properties
+
+# Android signing keystore (local, never commit)
+/Keystore.jks
