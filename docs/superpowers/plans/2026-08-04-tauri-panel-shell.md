@@ -1208,6 +1208,30 @@ git commit -m "feat(tauri): install the transport shim via plugin init script"
 
 - Consumes: everything from Tasks 1–6.
 
+- [ ] **Step 0: Fix the two parked minors from earlier reviews**
+
+In `apps/tauri/src-tauri/Cargo.toml` replace the template placeholder metadata (the deb/rpm bundlers ship `description` as the package description and `authors` as the maintainer field):
+
+```toml
+[package]
+name = "app"
+version = "0.1.0"
+description = "MetaCubeXD — dashboard for the Mihomo proxy kernel"
+authors = ["TTsdzb <ttsdzb@outlook.com>"]
+license = "MIT"
+repository = "https://github.com/TTsdzb/metacubexd-tauri"
+edition = "2021"
+rust-version = "1.77.2"
+```
+
+In `apps/tauri/src-tauri/src/shim.rs`, reword the doc comment on the `SHIM` const (it says "the committed placeholder" — the file is gitignored and now contains the real bundle):
+
+```rust
+/// The transport shim, bundled by `apps/tauri/build-shim.mjs` on every
+/// dev/build run (gitignored; the bundle embeds here via include_str!).
+const SHIM: &str = include_str!("../shim.js");
+```
+
 - [ ] **Step 1: Run the UI regression suite**
 
 Run: `pnpm --filter @metacubexd/ui test:unit`
@@ -1215,11 +1239,11 @@ Expected: PASS (unchanged upstream suite).
 
 - [ ] **Step 2: Run the workspace checks**
 
-Run: `pnpm typecheck`
-Expected: PASS for agent, config-editor, ui, tauri.
+Run: `pnpm -r typecheck`
+Expected: PASS for agent, config-editor, tauri. `packages/ui` FAILS with `ERR_PACKAGE_PATH_NOT_EXPORTED` (vue-tsc 3.3.8 vs typescript 7.0.2) — pre-existing upstream breakage, verified before this branch existed; record it, do not fix it here.
 
 Run: `pnpm lint`
-Expected: PASS. If the UI-focused eslint config (antfu, `vue: true`) errors on the shim files, fix by adding to `apps/tauri/package.json` a `lint` script of `prettier --check .` instead of eslint — the shim's correctness is carried by tsc + vitest — and note the deviation in the commit.
+Expected: eslint crashes repo-wide with "typescript-eslint does not support TS 7.0" — pre-existing upstream breakage (upstream CI never runs lint). Instead verify formatting: `pnpm exec prettier --check .` in `apps/tauri`, and confirm `git status` shows no formatting damage to `packages/ui`. Record both breakages; do not fix them here.
 
 - [ ] **Step 3: Smoke the dev app**
 
