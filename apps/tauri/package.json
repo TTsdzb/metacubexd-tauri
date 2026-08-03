@@ -1,0 +1,28 @@
+{
+  "name": "@metacubexd/tauri",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "android:build": "node build-shim.mjs && tauri android build --apk --ci --split-per-abi",
+    "android:dev": "node build-shim.mjs && tauri android dev",
+    "android:init": "tauri android init --ci --skip-targets-install",
+    "build": "node build-shim.mjs && tauri build",
+    "dev": "node build-shim.mjs && tauri dev",
+    "tauri": "tauri",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@tauri-apps/plugin-http": "catalog:",
+    "@tauri-apps/plugin-websocket": "catalog:"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "catalog:",
+    "@types/node": "catalog:",
+    "esbuild": "catalog:",
+    "jsdom": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}
