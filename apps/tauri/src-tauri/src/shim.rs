@@ -11,9 +11,8 @@ use tauri::{
     Runtime,
 };
 
-/// The transport shim, bundled by `apps/tauri/build-shim.mjs` (Task 6). Every
-/// dev/build script regenerates it before cargo runs; the committed placeholder
-/// (Task 6 replaces it for real) exists so `cargo check` works today.
+/// The transport shim, bundled by `apps/tauri/build-shim.mjs` on every
+/// dev/build run (gitignored; the bundle embeds here via include_str!).
 const SHIM: &str = include_str!("../shim.js");
 
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
