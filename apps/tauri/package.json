@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "android:build": "node build-shim.mjs && tauri android build --apk --ci --split-per-abi",
+    "android:build": "node build-shim.mjs && tauri android build --apk --ci && tauri android build --apk --ci --split-per-abi",
     "android:dev": "node build-shim.mjs && tauri android dev",
     "android:init": "tauri android init --ci --skip-targets-install",
     "build": "node build-shim.mjs && tauri build",
