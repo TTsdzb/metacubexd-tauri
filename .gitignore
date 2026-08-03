@@ -38,3 +38,6 @@ coverage
 
 # git worktrees (local dev isolation)
 .worktrees/
+
+# Android signing keystore (local, never commit)
+/Keystore.jks
