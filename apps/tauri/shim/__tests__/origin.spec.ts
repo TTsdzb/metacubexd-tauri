@@ -51,6 +51,23 @@ describe('shouldUseNativeTransport', () => {
     ).toBe(true)
   })
 
+  it('keeps Tauri IPC URLs on the native path (no plugin recursion)', () => {
+    // Tauri's invoke() transport is a fetch to the ipc:// custom scheme.
+    // Routing it through the plugin would re-enter invoke() → infinite
+    // recursion (wrapper → plugin fetch → invoke → ipc fetch → wrapper).
+    expect(
+      shouldUseNativeTransport(
+        'ipc://localhost/plugin%3Ahttp%7Cfetch',
+        ORIGIN,
+      ),
+    ).toBe(true)
+  })
+
+  it('keeps unknown schemes on the native path', () => {
+    expect(shouldUseNativeTransport('file:///tmp/x.js', ORIGIN)).toBe(true)
+    expect(shouldUseNativeTransport('about:blank', ORIGIN)).toBe(true)
+  })
+
   it('falls back to native for malformed URLs', () => {
     expect(shouldUseNativeTransport('not a url', ORIGIN)).toBe(true)
   })
