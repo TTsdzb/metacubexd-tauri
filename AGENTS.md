@@ -1,14 +1,15 @@
 # AGENTS.md
 
-MetaCubeXD: Mihomo dashboard as a Nuxt CSR SPA, Electron desktop app, Nitro
-server, and shared agent logic. Read `CONTEXT.md` (the project glossary, already
+MetaCubeXD: Mihomo dashboard as a Nuxt CSR SPA and a Tauri desktop/Android
+shell. Read `CONTEXT.md` (the project glossary, already
 loaded) before writing prose or naming concepts — its ubiquitous language is
 enforced across code and docs. `CONTRIBUTING.md` has the full process; this file
 only holds what's easy to get wrong.
 
 ## Workspace layout
 
-pnpm monorepo (pnpm 10.34.1, Node 24 via `.node-version`). Five packages:
+pnpm monorepo (pnpm 10.34.1, Node 24 via `.node-version`). Four workspace
+members:
 
 - `packages/ui` — the Nuxt dashboard. CSR only (`ssr: false`, hash-mode
   router). Also produces the static panel and the desktop renderer.
@@ -73,14 +74,16 @@ pnpm monorepo (pnpm 10.34.1, Node 24 via `.node-version`). Five packages:
 ## Conventions
 
 - Commits: Conventional Commits, enforced by husky commitlint; lint-staged
-  runs prettier + eslint. Release versions are synced across the root,
-  `packages/ui`, and `apps/desktop` by release-please — don't bump versions
-  manually.
+  runs prettier + eslint. The Tauri app version lives in
+  `apps/tauri/src-tauri/tauri.conf.json` (currently independent of upstream's
+  release-please flow) — don't bump it casually; releases are tagged
+  `tauri-v<TauriVersion>-<WebVersion>` and built by CI.
 - i18n: seven locale files in `packages/ui/i18n/locales` (`en`, `zh`, `ru`,
   `ja`, `ko`, `fr`, `fa`) must stay in sync when user-facing text changes.
 - Never put tokens, subscription URLs, profile contents, or keys in
-  fixtures, logs, or screenshots.
-- Desktop changes touching Electron lifecycle, system proxy, TUN, helpers,
-  kernel management, or packaging need real-platform smoke testing (see
-  CONTRIBUTING.md); `apps/desktop/scripts/after-pack.cjs` flips Electron
-  runtime fuses.
+  fixtures, logs, or screenshots. The Android signing keystore
+  (`/Keystore.jks` at the repo root) and `gen/android/keystore.properties`
+  are gitignored — never commit them.
+- Tauri changes touching the transport shim or Rust host need real-platform
+  smoke testing (see FORK.md); the shim's unit tests cover the routing and
+  WebSocket lifecycle.
