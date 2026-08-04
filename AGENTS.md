@@ -16,29 +16,39 @@ pnpm monorepo (pnpm 10.34.1, Node 24 via `.node-version`). Five packages:
 - `packages/agent` — mihomo lifecycle/profiles/TUN, shared by server and
   desktop. Consumed as **TS source** (exports point at `src/*.ts`), no build
   step.
-- `apps/server` — Nitro all-in-one server, packaged via Docker.
-- `apps/desktop` — Electron. **No renderer build**: it copies the UI's
-  `nuxt generate` output into `renderer/` and loads it with `loadFile`.
+- `apps/tauri` — the Tauri v2 desktop/Android shell: a Rust host
+  (`src-tauri/`) plus a TypeScript transport shim (`shim/`) that routes all
+  cross-origin `fetch`/`WebSocket` traffic through the official
+  `tauri-plugin-http` / `tauri-plugin-websocket`. It consumes `packages/ui`'s
+  `nuxt generate` output in place (`generate:desktop`, relative base URL, PWA
+  disabled). No renderer build lives here.
+- `apps/desktop`, `apps/server` — upstream files, present for merge
+  cleanliness only; **excluded from the pnpm workspace**, not built, not
+  tested.
 
 ## Commands
 
 - Dev: `pnpm dev` (UI only), `pnpm dev:mock` (UI, no mihomo needed),
-  `pnpm dev:server` (builds UI first), `pnpm dev:desktop` (fetches mihomo
-  binary + ensures Electron).
-- Build: `pnpm build:ui` (runs `nuxt generate`), `pnpm build:server`,
-  `pnpm build:desktop` (electron-vite bundles only — **not** an installer).
+  `pnpm dev:tauri` (shim → nuxt dev → Tauri window), `pnpm dev:android`
+  (Android device/emulator).
+- Build: `pnpm build:ui` (runs `nuxt generate`), `pnpm build:tauri`
+  (shim → `generate:desktop` → release bundles; deb/rpm/msi/nsis/app/dmg —
+  **no AppImage**), `pnpm build:android` (APKs, universal + per-ABI).
   `pnpm generate` additionally copies the UI to root `.output`.
 - Checks: `pnpm typecheck` then `pnpm lint`.
   **`pnpm lint` runs `eslint --fix` (write mode)** — inspect its changes
   before staging. Formatting is Prettier's job (eslint stylistic is off):
   no semicolons, single quotes.
 - Tests (vitest everywhere): `pnpm --filter @metacubexd/ui test:unit`,
-  `... test:e2e`, `pnpm --filter @metacubexd/{agent,server,desktop} test`.
-  UI e2e requires a **`build:mock` first** (CI does `build:mock` then
-  `test:e2e`) plus `playwright install chromium`. E2e tests share one server
-  and run sequentially.
-- Agent smoke tests are manual (`packages/agent/MANUAL.md`): real binary,
-  network, and local ports, deliberately excluded from CI.
+  `... test:e2e`, `pnpm --filter @metacubexd/tauri test` (shim, jsdom),
+  `pnpm --filter @metacubexd/agent test`. UI e2e requires a **`build:mock`
+  first** (CI does `build:mock` then `test:e2e`) plus
+  `playwright install chromium`. E2e tests share one server and run
+  sequentially. Agent smoke tests are manual (`packages/agent/MANUAL.md`).
+- Rust: `cargo check` / `cargo clippy` in `apps/tauri/src-tauri` (Android
+  builds need `ANDROID_HOME`/`NDK_HOME` + the four rustup android targets;
+  see `FORK.md`).
+- Releases: push a `tauri-v*` tag — CI builds and publishes all bundles.
 
 ## Dependency and toolchain traps
 
@@ -53,6 +63,12 @@ pnpm monorepo (pnpm 10.34.1, Node 24 via `.node-version`). Five packages:
   changed.
 - Nuxt sources are at the package root (`srcDir: '.'`); auto-imports, no
   `app/` dir.
+- The Tauri npm packages and `esbuild` are pinned in the root catalog
+  (`@tauri-apps/*`, `esbuild`); Rust crates are pinned in
+  `apps/tauri/src-tauri/Cargo.toml`. `tauri-plugin-http` must keep the
+  `unsafe-headers` feature (mihomo's `Authorization` header would be dropped
+  otherwise). `shellEmulator: true` in `pnpm-workspace.yaml` is load-bearing
+  for the Windows build.
 
 ## Conventions
 
