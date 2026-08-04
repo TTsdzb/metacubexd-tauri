@@ -2,3 +2,8 @@ auto-imports.d.ts
 dist
 CHANGELOG.md
 pnpm-lock.yaml
+
+# Generated Tauri build artifacts (lint-staged runs prettier from the root).
+apps/tauri/src-tauri/gen
+apps/tauri/src-tauri/target
+apps/tauri/src-tauri/shim.js
