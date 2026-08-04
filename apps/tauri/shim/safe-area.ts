@@ -1,5 +1,5 @@
 const SAFE_AREA_CSS =
-  'body{padding-top:env(safe-area-inset-top,0px)!important;padding-bottom:env(safe-area-inset-bottom,0px)!important}'
+  'body{padding-top:env(safe-area-inset-top,0px)!important;padding-bottom:env(safe-area-inset-bottom,0px)!important}[class~="fixed"][class~="bottom-0"]{padding-bottom:env(safe-area-inset-bottom,0px)!important}'
 
 /**
  * The Android webview draws edge-to-edge under the system bars (the template's
