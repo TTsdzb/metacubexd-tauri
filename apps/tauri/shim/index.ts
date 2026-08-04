@@ -1,4 +1,5 @@
 import { createFetch } from './fetch'
+import { installSafeAreaPadding } from './safe-area'
 import { createWebSocket } from './websocket'
 
 export interface ShimTarget {
@@ -23,4 +24,9 @@ export function install(target: ShimTarget, origin?: string): void {
   const base = origin ?? globalThis.location.origin
   target.fetch = createFetch(target.fetch.bind(target), base)
   target.WebSocket = createWebSocket(target.WebSocket, base)
+  try {
+    installSafeAreaPadding(globalThis.document)
+  } catch {
+    // Non-DOM context (unit tests) — nothing to pad.
+  }
 }
