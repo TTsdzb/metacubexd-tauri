@@ -21,6 +21,14 @@ type PluginMessage = {
  *    forwarded as a MessageEvent with string data; Binary as a Blob; Ping/Pong
  *    dropped; Close becomes an onclose dispatch so the UI's reconnect-with-
  *    backoff keeps working. A failed connect dispatches onerror then onclose.
+ *
+ * Lifecycle notes (learned the hard way against a real mihomo):
+ * - mihomo's WS server never replies to a client Close frame, so a closed
+ *   socket can keep delivering server messages. A browser discards them on a
+ *   closed socket; so do we — anything arriving after close() is dropped.
+ * - close() may run while the plugin connect is still in flight (the dashboard
+ *   switches backends quickly): a socket resolving after close() is
+ *   disconnected immediately, never wired.
  */
 export function createWebSocket(
   NativeWebSocket: typeof globalThis.WebSocket,
@@ -63,6 +71,12 @@ export function createWebSocket(
       }
       WebSocketPlugin.connect(this.url)
         .then((socket) => {
+          // close() may have been called while the connect was in flight: never
+          // wire a socket the user has already closed.
+          if (this.userClosed) {
+            void socket.disconnect().catch(() => {})
+            return
+          }
           this.socket = socket
           socket.addListener((msg) => this.handleMessage(msg))
           this.readyStateValue = TauriWebSocket.OPEN
@@ -106,13 +120,19 @@ export function createWebSocket(
     close(): void {
       this.userClosed = true
       this.readyStateValue = TauriWebSocket.CLOSING
-      if (this.socket) {
-        void this.socket.disconnect()
-        this.readyStateValue = TauriWebSocket.CLOSED
+      const socket = this.socket
+      this.socket = null
+      if (socket) {
+        void socket.disconnect().catch(() => {})
       }
+      this.readyStateValue = TauriWebSocket.CLOSED
     }
 
     private handleMessage(msg: PluginMessage): void {
+      // mihomo's WS server never replies to a client Close frame, so a closed
+      // socket can keep delivering server messages. A browser discards them on
+      // a closed socket; so do we.
+      if (this.userClosed) return
       switch (msg.type) {
         case 'Text':
           this.dispatch(

@@ -7,7 +7,7 @@
     "core:default",
     {
       "identifier": "http:default",
-      "allow": [{ "url": "http://*" }, { "url": "https://*" }]
+      "allow": [{ "url": "http://*:*" }, { "url": "https://*:*" }]
     },
     "websocket:default"
   ]

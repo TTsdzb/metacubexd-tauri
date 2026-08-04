@@ -19,7 +19,7 @@ class MockSocket {
     }
   })
   send = vi.fn()
-  disconnect = vi.fn()
+  disconnect = vi.fn(async () => {})
 }
 
 function makeShim() {
@@ -129,5 +129,40 @@ describe('createWebSocket', () => {
     await vi.waitFor(() => expect(ws.readyState).toBe(1))
     ws.close()
     expect(socket.disconnect).toHaveBeenCalled()
+  })
+
+  it('discards messages that arrive after close()', async () => {
+    // mihomo's WS server never replies to a client Close frame, so a closed
+    // socket can keep delivering messages from the server. A browser discards
+    // them on a closed socket; the adapter must do the same.
+    const { Shim } = makeShim()
+    const ws = new Shim('ws://192.168.1.5:9090/connections')
+    const onmessage = vi.fn()
+    ws.onmessage = onmessage
+    await vi.waitFor(() => expect(ws.readyState).toBe(1))
+    ws.close()
+    socket.listener?.({ type: 'Text', data: '{"up":1}' })
+    socket.listener?.({ type: 'Text', data: '{"up":2}' })
+    expect(onmessage).not.toHaveBeenCalled()
+    expect(ws.readyState).toBe(3)
+  })
+
+  it('disconnects a socket that resolves after close()', async () => {
+    let resolveConnect!: (s: MockSocket) => void
+    connectMock.mockReturnValue(
+      new Promise((resolve) => {
+        resolveConnect = resolve
+      }),
+    )
+    const { Shim } = makeShim()
+    const ws = new Shim('ws://192.168.1.5:9090/connections')
+    const onopen = vi.fn()
+    ws.onopen = onopen
+    ws.close()
+    const late = new MockSocket()
+    resolveConnect(late)
+    await vi.waitFor(() => expect(late.disconnect).toHaveBeenCalled())
+    expect(onopen).not.toHaveBeenCalled()
+    expect(ws.readyState).toBe(3)
   })
 })
