@@ -374,7 +374,8 @@ Overwrite with (bundle.targets per the official config reference; no `appimage`)
         "height": 800,
         "minWidth": 720,
         "minHeight": 480,
-        "resizable": true
+        "resizable": true,
+        "decorations": true
       }
     ]
   },
@@ -416,7 +417,7 @@ pnpm tauri icon ../desktop/build/icon.png
     "core:default",
     {
       "identifier": "http:default",
-      "allow": [{ "url": "http://*" }, { "url": "https://*" }]
+      "allow": [{ "url": "http://*:*" }, { "url": "https://*:*" }]
     },
     "websocket:default"
   ]
@@ -424,6 +425,8 @@ pnpm tauri icon ../desktop/build/icon.png
 ```
 
 The HTTP scope is necessarily open: the user types arbitrary backend URLs, so no narrower allowlist can exist (same trust posture as a browser pointed at the same addresses, minus the CORS theater). `websocket:default` carries no pre-configured scope per the plugin docs.
+
+Note: the patterns must be `http://*:*` / `https://*:*` — the `urlpattern` crate treats an empty port in the pattern as "no port", so `http://*` silently rejects every URL that carries a port (verified empirically; the backend probe fails with "url not allowed on the configured scope").
 
 - [ ] **Step 11: Verify the Rust build**
 
@@ -533,18 +536,27 @@ function normalizedScheme(protocol: string): string {
   return SCHEME_ALIASES[scheme] ?? scheme
 }
 
+// Only these schemes may route through the Tauri plugins. Everything else —
+// blob:/data:, Tauri's own ipc:// IPC transport, file:, about:, malformed
+// URLs — takes the captured native implementation. ipc:// in particular must
+// never reach the HTTP plugin: plugin fetch performs its IPC via invoke(),
+// which on Linux WebKitGTK is itself a fetch to the ipc:// scheme, so routing
+// it through the plugin would recurse forever (wrapper → plugin fetch →
+// invoke → ipc fetch → wrapper).
+const PLUGIN_SCHEMES = new Set(['http', 'https', 'ws', 'wss'])
+
 /**
  * Decide whether a URL must go through the captured native transport or the
  * Tauri plugin transport. Same-origin and relative URLs use the native
- * implementation; anything else uses the plugins. blob:/data: and malformed
- * URLs always take the native path (native fetch owns the TypeError for the
- * latter).
+ * implementation; cross-origin http(s)/ws(s) use the plugins; anything else
+ * (blob:, data:, ipc:, file:, malformed) uses the native implementation
+ * (native fetch owns the TypeError for the latter).
  */
 export function shouldUseNativeTransport(url: string, origin: string): boolean {
   try {
     const base = new URL(origin)
     const target = new URL(url, origin)
-    if (target.protocol === 'blob:' || target.protocol === 'data:') return true
+    if (!PLUGIN_SCHEMES.has(target.protocol.replace(/:$/, ''))) return true
     return (
       normalizedScheme(target.protocol) === normalizedScheme(base.protocol) &&
       target.host === base.host
@@ -554,6 +566,11 @@ export function shouldUseNativeTransport(url: string, origin: string): boolean {
   }
 }
 ```
+
+Note: the whitelist is load-bearing — the original same-origin-only predicate
+routed Tauri's own `ipc://` IPC transport through the HTTP plugin, recursing
+infinitely (blank window, WebProcess at 96% CPU / ~20GB RSS). The regression
+tests cover `ipc:`, `file:`, and `about:`.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -927,6 +944,12 @@ export function createWebSocket(
       }
       WebSocketPlugin.connect(this.url)
         .then((socket) => {
+          // close() may have been called while the connect was in flight: never
+          // wire a socket the user has already closed.
+          if (this.userClosed) {
+            void socket.disconnect().catch(() => {})
+            return
+          }
           this.socket = socket
           socket.addListener((msg) => this.handleMessage(msg))
           this.readyStateValue = TauriWebSocket.OPEN
@@ -970,13 +993,19 @@ export function createWebSocket(
     close(): void {
       this.userClosed = true
       this.readyStateValue = TauriWebSocket.CLOSING
-      if (this.socket) {
-        void this.socket.disconnect()
-        this.readyStateValue = TauriWebSocket.CLOSED
+      const socket = this.socket
+      this.socket = null
+      if (socket) {
+        void socket.disconnect().catch(() => {})
       }
+      this.readyStateValue = TauriWebSocket.CLOSED
     }
 
     private handleMessage(msg: PluginMessage): void {
+      // mihomo's WS server never replies to a client Close frame, so a closed
+      // socket can keep delivering server messages. A browser discards them on
+      // a closed socket; so do we.
+      if (this.userClosed) return
       switch (msg.type) {
         case 'Text':
           this.dispatch(
@@ -1625,6 +1654,17 @@ prerequisites), plus the four `rustup` android targets. Without
 Enter the full URL including the scheme (`http://192.168.1.5:9090`). A bare
 host is prefixed with the webview's own protocol by the dashboard
 (`transformEndpointURL`) — an upstream behavior shared by every hosted panel.
+
+## Linux NVIDIA/Wayland
+
+On NVIDIA GPUs, WebKitGTK can fail to render (blank window, WebProcess spin)
+under Wayland. The official workarounds (in order) are
+`nvidia_drm.modeset=1` kernel param, `__NV_DISABLE_EXPLICIT_SYNC=1`,
+`WEBKIT_DISABLE_DMABUF_RENDERER=1`, `WEBKIT_DISABLE_COMPOSITING_MODE=1` (see
+the Tauri "Linux Graphics Issues" doc). The maintainer's machine needs
+`__NV_DISABLE_EXPLICIT_SYNC=1` — set it per-launch or in the desktop entry;
+per the official doc, do NOT ship it unconditionally in `main()` unless the
+app is verified affected on the target hardware.
 
 ## Upstream merges
 
