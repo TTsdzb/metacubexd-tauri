@@ -1,10 +1,7 @@
 import WebSocketPlugin from '@tauri-apps/plugin-websocket'
 import { shouldUseNativeTransport } from './origin'
 
-type PluginMessage = {
-  type: string
-  data: unknown
-}
+type PluginMessage = string | { type: string; data: unknown }
 
 /**
  * WebSocket replacement. Same-origin URLs (Vite HMR in dev) delegate to the
@@ -58,6 +55,7 @@ export function createWebSocket(
     private socket: WebSocketPlugin | null = null
     private buffered: string[] = []
     private userClosed = false
+    private connectionEnded = false
 
     constructor(url: string | URL, _protocols?: string | string[]) {
       this.url = url.toString()
@@ -119,6 +117,7 @@ export function createWebSocket(
 
     close(): void {
       this.userClosed = true
+      this.connectionEnded = true
       this.readyStateValue = TauriWebSocket.CLOSING
       const socket = this.socket
       this.socket = null
@@ -132,7 +131,20 @@ export function createWebSocket(
       // mihomo's WS server never replies to a client Close frame, so a closed
       // socket can keep delivering server messages. A browser discards them on
       // a closed socket; so do we.
-      if (this.userClosed) return
+      if (this.connectionEnded) return
+      if (typeof msg === 'string') {
+        // The plugin serializes connection errors (server restart, network
+        // loss) as a plain string without an envelope. Surface them as error +
+        // close so the UI's reconnect-with-backoff logic fires.
+        this.connectionEnded = true
+        this.readyStateValue = TauriWebSocket.CLOSED
+        this.dispatch('error', new Event('error'))
+        this.dispatch(
+          'close',
+          new CloseEvent('close', { code: 1006, reason: '' }),
+        )
+        return
+      }
       switch (msg.type) {
         case 'Text':
           this.dispatch(
@@ -150,6 +162,7 @@ export function createWebSocket(
           break
         case 'Close': {
           const frame = msg.data as { code?: number; reason?: string } | null
+          this.connectionEnded = true
           this.readyStateValue = TauriWebSocket.CLOSED
           this.dispatch(
             'close',

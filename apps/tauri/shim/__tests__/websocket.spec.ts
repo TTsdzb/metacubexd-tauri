@@ -165,4 +165,32 @@ describe('createWebSocket', () => {
     expect(onopen).not.toHaveBeenCalled()
     expect(ws.readyState).toBe(3)
   })
+
+  it('treats a plugin error message (dropped connection) as error + close', async () => {
+    // The plugin serializes connection errors (server restart, network loss)
+    // as a plain string with no envelope. The UI's reconnect logic keys off
+    // onclose, so the adapter must surface it as one.
+    const { Shim } = makeShim()
+    const ws = new Shim('ws://192.168.1.5:9090/connections')
+    const onerror = vi.fn()
+    const onclose = vi.fn()
+    ws.onerror = onerror
+    ws.onclose = onclose
+    await vi.waitFor(() => expect(ws.readyState).toBe(1))
+    socket.listener?.('connection closed unexpectedly')
+    expect(onerror).toHaveBeenCalled()
+    expect(onclose).toHaveBeenCalled()
+    expect(ws.readyState).toBe(3)
+  })
+
+  it('ignores messages after a dropped-connection error', async () => {
+    const { Shim } = makeShim()
+    const ws = new Shim('ws://192.168.1.5:9090/connections')
+    const onmessage = vi.fn()
+    ws.onmessage = onmessage
+    await vi.waitFor(() => expect(ws.readyState).toBe(1))
+    socket.listener?.('connection closed unexpectedly')
+    socket.listener?.({ type: 'Text', data: '{"up":1}' })
+    expect(onmessage).not.toHaveBeenCalled()
+  })
 })

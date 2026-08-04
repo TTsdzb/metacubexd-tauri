@@ -6,7 +6,7 @@
   "build": {
     "beforeDevCommand": "pnpm --filter @metacubexd/ui dev",
     "devUrl": "http://localhost:3000",
-    "beforeBuildCommand": "pnpm --filter @metacubexd/ui generate:desktop",
+    "beforeBuildCommand": "node build-shim.mjs && pnpm --filter @metacubexd/ui generate:desktop",
     "frontendDist": "../../../packages/ui/.output/public"
   },
   "app": {
