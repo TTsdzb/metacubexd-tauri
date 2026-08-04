@@ -56,10 +56,7 @@ describe('shouldUseNativeTransport', () => {
     // Routing it through the plugin would re-enter invoke() → infinite
     // recursion (wrapper → plugin fetch → invoke → ipc fetch → wrapper).
     expect(
-      shouldUseNativeTransport(
-        'ipc://localhost/plugin%3Ahttp%7Cfetch',
-        ORIGIN,
-      ),
+      shouldUseNativeTransport('ipc://localhost/plugin%3Ahttp%7Cfetch', ORIGIN),
     ).toBe(true)
   })
 
