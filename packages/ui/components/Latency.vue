@@ -8,9 +8,8 @@ interface Props {
   groupName?: string
   class?: string | Record<string, boolean>
   // When true the pill is a real keyboard-operable control (own tab stop +
-  // Enter/Space). Left false for the display-only call sites (ProxyPreviewBar)
-  // and where it sits inside another button (ProxyNodeChip) to avoid a stray
-  // tab stop / nested interactive.
+  // Enter/Space). Left false for display-only call sites such as
+  // ProxyPreviewBar.
   interactive?: boolean
 }
 

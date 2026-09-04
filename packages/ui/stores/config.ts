@@ -50,6 +50,14 @@ export const useConfigStore = defineStore('config', () => {
     'proxiesDisplayMode',
     PROXIES_DISPLAY_MODE.CARD,
   )
+  // Retired/unknown modes (including the removed `chipsMode`) must not leave
+  // the segmented switcher with no active item or a mismatched body layout.
+  const validProxiesDisplayModes = new Set<string>(
+    Object.values(PROXIES_DISPLAY_MODE),
+  )
+  if (!validProxiesDisplayModes.has(proxiesDisplayMode.value)) {
+    proxiesDisplayMode.value = PROXIES_DISPLAY_MODE.CARD
+  }
   const renderProxiesInTwoColumns = useLocalStorage(
     'renderProxiesInTwoColumns',
     true,

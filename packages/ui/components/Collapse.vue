@@ -35,8 +35,6 @@ const bodyLayoutClass = computed(() => {
   switch (displayMode.value) {
     case PROXIES_DISPLAY_MODE.CARD:
       return 'grid'
-    case PROXIES_DISPLAY_MODE.CHIPS:
-      return 'flex flex-wrap gap-2'
     case PROXIES_DISPLAY_MODE.TABLE:
       return 'flex flex-col gap-1'
     default:

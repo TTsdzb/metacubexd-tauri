@@ -272,6 +272,117 @@ describe('e2E Page Tests', () => {
       ).resolves.toBe(true)
     })
 
+    it('should jump to the selected proxy on desktop', async () => {
+      const currentPage = await gotoAppPath(page, '/proxies')
+      const jumpButton = currentPage.locator(
+        'button[data-testid="jump-to-current"][data-proxy-group="Auto Select"]',
+      )
+      const selectedProxy = currentPage.locator(
+        '[data-proxy-group="Auto Select"][data-selected="true"]',
+      )
+
+      await expect
+        .poll(() => jumpButton.isVisible(), { timeout: ELEMENT_TIMEOUT })
+        .toBe(true)
+      const wasExpanded = (await selectedProxy.count()) > 0
+
+      await currentPage.evaluate(() => {
+        const testWindow = window as unknown as Record<string, unknown>
+        testWindow.originalScrollIntoView = Element.prototype.scrollIntoView
+        Element.prototype.scrollIntoView = function () {
+          testWindow.scrolledProxyGroup = (
+            this as HTMLElement
+          ).dataset.proxyGroup
+        }
+      })
+
+      try {
+        await jumpButton.click()
+        await expect
+          .poll(() =>
+            currentPage.evaluate(
+              () =>
+                (window as unknown as Record<string, unknown>)
+                  .scrolledProxyGroup,
+            ),
+          )
+          .toBe('Auto Select')
+        await expect(selectedProxy.isVisible()).resolves.toBe(true)
+      } finally {
+        await currentPage.evaluate(() => {
+          const testWindow = window as unknown as Record<string, unknown>
+          Element.prototype.scrollIntoView =
+            testWindow.originalScrollIntoView as typeof Element.prototype.scrollIntoView
+          delete testWindow.originalScrollIntoView
+          delete testWindow.scrolledProxyGroup
+        })
+        if (!wasExpanded) {
+          await jumpButton.evaluate((button) => {
+            const groupHeader = button.closest(
+              '.cursor-pointer',
+            ) as HTMLElement | null
+            groupHeader?.click()
+          })
+        }
+      }
+    })
+
+    it('should scroll the master-detail pane to top on desktop', async () => {
+      const currentPage = await gotoAppPath(page, '/proxies')
+      await currentPage.setViewportSize({ width: 1024, height: 600 })
+
+      try {
+        await currentPage.getByTitle('Master-detail').click()
+        const detailScrollContainer = currentPage.getByTestId(
+          'master-detail-scroll-container',
+        )
+        const detailHeader = currentPage.getByTestId('master-detail-header')
+        await expect(
+          detailHeader.locator('input[type="search"]').count(),
+        ).resolves.toBe(0)
+        const headerTopBeforeScroll = await detailHeader.evaluate(
+          (element) => element.getBoundingClientRect().top,
+        )
+
+        await detailScrollContainer.evaluate((element) => {
+          const spacer = document.createElement('div')
+          spacer.style.flex = '0 0 600px'
+          spacer.setAttribute('aria-hidden', 'true')
+          element.append(spacer)
+          element.scrollTop = 320
+          element.dispatchEvent(new Event('scroll'))
+        })
+        await expect(
+          detailHeader.evaluate(
+            (element) => element.getBoundingClientRect().top,
+          ),
+        ).resolves.toBe(headerTopBeforeScroll)
+
+        const scrollToTopButton = currentPage.getByTestId('scroll-to-top')
+        await expect
+          .poll(() => scrollToTopButton.isVisible(), {
+            timeout: ELEMENT_TIMEOUT,
+          })
+          .toBe(true)
+
+        await currentPage.emulateMedia({ reducedMotion: 'reduce' })
+        await scrollToTopButton.click()
+        await expect(
+          detailScrollContainer.evaluate((element) => element.scrollTop),
+        ).resolves.toBe(0)
+      } finally {
+        await currentPage.emulateMedia({ reducedMotion: 'no-preference' })
+        await currentPage.getByTitle('Card').click()
+        await currentPage
+          .getByTestId('proxies-scroll-container')
+          .evaluate((element) => {
+            element.scrollTop = 0
+            element.dispatchEvent(new Event('scroll'))
+          })
+        await currentPage.setViewportSize({ width: 1920, height: 1080 })
+      }
+    })
+
     it('should scroll the active proxy tab to top on mobile', async () => {
       const currentPage = getPage(page)
       await currentPage.setViewportSize({ width: 390, height: 844 })
@@ -293,9 +404,15 @@ describe('e2E Page Tests', () => {
           )
           .toBeGreaterThan(360)
 
-        await expect(
-          currentPage.getByTestId('scroll-to-top').count(),
-        ).resolves.toBe(0)
+        await proxyScrollContainer.evaluate((el) => {
+          el.scrollTop = 0
+          el.dispatchEvent(new Event('scroll'))
+        })
+        await expect
+          .poll(() => currentPage.getByTestId('scroll-to-top').count(), {
+            timeout: ELEMENT_TIMEOUT,
+          })
+          .toBe(0)
         await proxyScrollContainer.evaluate((el) => {
           el.scrollTop = 360
           el.dispatchEvent(new Event('scroll'))
@@ -352,7 +469,7 @@ describe('e2E Page Tests', () => {
           })
           .toBe(0)
 
-        // The floating control remains a mobile-only affordance.
+        // The floating control remains available after switching to desktop.
         await providerScrollContainer.evaluate((el) => {
           el.scrollTop = 320
           el.dispatchEvent(new Event('scroll'))
@@ -363,7 +480,13 @@ describe('e2E Page Tests', () => {
           })
           .toBe(true)
         await currentPage.setViewportSize({ width: 1024, height: 844 })
-        await expect(scrollToTopButton.isVisible()).resolves.toBe(false)
+        await expect(scrollToTopButton.isVisible()).resolves.toBe(true)
+        await scrollToTopButton.click()
+        await expect
+          .poll(() => providerScrollContainer.evaluate((el) => el.scrollTop), {
+            timeout: ELEMENT_TIMEOUT,
+          })
+          .toBe(0)
 
         // Inactive bottom-nav items preserve their normal navigation behavior.
         await currentPage.setViewportSize({ width: 390, height: 844 })

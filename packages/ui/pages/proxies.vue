@@ -18,6 +18,7 @@ import {
   IconReload,
   IconSearch,
   IconSettings,
+  IconTarget,
   IconWand,
   IconX,
 } from '@tabler/icons-vue'
@@ -25,7 +26,6 @@ import byteSize from 'byte-size'
 import Button from '~/components/Button.vue'
 import ConnectivityBoard from '~/components/ConnectivityBoard.vue'
 import ProxyNodeCard from '~/components/ProxyNodeCard.vue'
-import ProxyNodeChip from '~/components/ProxyNodeChip.vue'
 import ProxyNodeListItem from '~/components/ProxyNodeListItem.vue'
 import ProxyNodePreview from '~/components/ProxyNodePreview.vue'
 import ProxyNodeTableRow from '~/components/ProxyNodeTableRow.vue'
@@ -68,6 +68,9 @@ const connectivityModal = ref<{ open: () => void; close: () => void }>()
 const proxyConfigEditor = ref<{ open: () => Promise<void> | void }>()
 const proxyGroupsWrapper = ref<{ isTwoColumns: boolean }>()
 const providersWrapper = ref<{ isTwoColumns: boolean }>()
+const proxyMasterDetail = ref<{
+  scrollToTop: (behavior?: ScrollBehavior) => void
+}>()
 
 // Progressive rendering: only mount a window of nodes per group, growing as the
 // user scrolls near the bottom. Avoids mounting hundreds of cards in one frame
@@ -90,16 +93,42 @@ function updateScrollToTopVisibility(event: Event) {
     (event.currentTarget as HTMLElement).scrollTop > SCROLL_TO_TOP_THRESHOLD
 }
 
+function preferredScrollBehavior(): ScrollBehavior {
+  return window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    ? 'auto'
+    : 'smooth'
+}
+
 function scrollActiveListToTop() {
   const scrollEl = activeScrollEl.value
   if (!scrollEl) return
 
-  const prefersReducedMotion = window.matchMedia(
-    '(prefers-reduced-motion: reduce)',
-  ).matches
+  const behavior = preferredScrollBehavior()
   scrollEl.scrollTo({
     top: 0,
-    behavior: prefersReducedMotion ? 'auto' : 'smooth',
+    behavior,
+  })
+  proxyMasterDetail.value?.scrollToTop(behavior)
+}
+
+async function scrollToSelectedProxy(proxyGroup: ProxyType) {
+  // ProxyNodes is lazily mounted by Collapse, so reveal the group before
+  // looking up its selected node.
+  proxiesStore.collapsedMap[proxyGroup.name] = true
+  await nextTick()
+
+  const candidates =
+    proxiesScrollEl.value?.querySelectorAll<HTMLElement>(
+      '[data-proxy-group][data-selected="true"]',
+    ) ?? []
+  const selectedProxy = [...candidates].find(
+    (element) => element.dataset.proxyGroup === proxyGroup.name,
+  )
+
+  selectedProxy?.scrollIntoView({
+    block: 'center',
+    inline: 'nearest',
+    behavior: preferredScrollBehavior(),
   })
 }
 
@@ -112,7 +141,7 @@ async function onProxyConfigSaved() {
   await proxiesStore.fetchProxies()
 }
 
-watch(activeTab, () => {
+watch([activeTab, () => configStore.proxiesDisplayMode], () => {
   showScrollToTop.value = false
 })
 
@@ -298,6 +327,11 @@ const ProxyGroupTitle = defineComponent({
         recommendedNode.value !== null &&
         recommendedNode.value !== props.proxyGroup.now,
     )
+    const hasVisibleCurrentProxy = computed(
+      () =>
+        !!props.proxyGroup.now &&
+        props.sortedProxyNames.includes(props.proxyGroup.now),
+    )
 
     return () =>
       h('div', { class: 'flex flex-col gap-3 flex-1 min-w-0' }, [
@@ -351,6 +385,26 @@ const ProxyGroupTitle = defineComponent({
               ],
             ),
             h('div', { class: 'flex items-center gap-1.5 shrink-0' }, [
+              // Desktop quick navigation to the selected node in this group.
+              h(
+                Button,
+                {
+                  class:
+                    'hidden sm:flex items-center justify-center w-9 h-9 rounded-lg bg-base-content/6 border border-base-content/8 text-base-content/60 transition-all duration-200 hover:bg-primary/15 hover:border-primary/30 hover:text-primary hover:-translate-y-px hover:shadow-lg hover:shadow-primary/15 active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-40',
+                  disabled: !hasVisibleCurrentProxy.value,
+                  title: t('jumpToCurrent'),
+                  'aria-label': `${t('jumpToCurrent')}: ${props.proxyGroup.name}`,
+                  'data-testid': 'jump-to-current',
+                  'data-proxy-group': props.proxyGroup.name,
+                  onClick: (e: MouseEvent) => {
+                    e.stopPropagation()
+                    scrollToSelectedProxy(props.proxyGroup)
+                  },
+                },
+                {
+                  default: () => h(IconTarget, { size: 18 }),
+                },
+              ),
               // Switch to Recommended button
               hasRecommendation.value &&
                 h(
@@ -465,7 +519,6 @@ const ProxyGroupTitle = defineComponent({
 // gets its own page-level branch in the template (see isMasterMode below).
 function nodeComponentFor(mode: string) {
   if (mode === PROXIES_DISPLAY_MODE.LIST) return ProxyNodeListItem
-  if (mode === PROXIES_DISPLAY_MODE.CHIPS) return ProxyNodeChip
   if (mode === PROXIES_DISPLAY_MODE.TABLE) return ProxyNodeTableRow
   return ProxyNodeCard
 }
@@ -530,6 +583,8 @@ const ProxyNodes = defineComponent({
           testUrl: props.proxyGroup.testUrl || null,
           timeout: props.proxyGroup.timeout ?? null,
           isSelected: props.proxyGroup.now === proxyName,
+          'data-proxy-group': props.proxyGroup.name,
+          'data-selected': props.proxyGroup.now === proxyName,
           ...(isCard
             ? {
                 isRecommended: recommendedNode.value === proxyName,
@@ -956,8 +1011,10 @@ const ProviderProxyNodes = defineComponent({
       <template v-else>
         <ProxyMasterDetail
           v-if="isMasterMode"
+          ref="proxyMasterDetail"
           :groups="renderProxies"
           :sorted-names-by-group="sortedNamesByGroup"
+          @scroll="updateScrollToTopVisibility"
         />
         <ProxiesRenderWrapper v-else ref="proxyGroupsWrapper">
           <template v-if="proxyGroupsWrapper?.isTwoColumns" #even>
@@ -1162,7 +1219,7 @@ const ProviderProxyNodes = defineComponent({
       <Button
         v-if="showScrollToTop"
         data-testid="scroll-to-top"
-        class="absolute right-[max(0.75rem,env(safe-area-inset-right))] bottom-[max(0.75rem,env(safe-area-inset-bottom))] z-30 flex size-11 items-center justify-center rounded-full border border-primary/30 bg-primary text-primary-content shadow-lg shadow-primary/25 hover:-translate-y-0.5 hover:bg-primary/90 lg:hidden"
+        class="absolute right-[max(0.75rem,env(safe-area-inset-right))] bottom-[max(0.75rem,env(safe-area-inset-bottom))] z-30 flex size-11 items-center justify-center rounded-full border border-primary/30 bg-primary text-primary-content shadow-lg shadow-primary/25 hover:-translate-y-0.5 hover:bg-primary/90"
         :aria-label="t('backToTop')"
         :title="t('backToTop')"
         @click="scrollActiveListToTop"

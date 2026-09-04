@@ -1,5 +1,6 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { nextTick } from 'vue'
 import { useConfigStore } from '../config'
 
 const localStorageMock = (() => {
@@ -23,6 +24,23 @@ const localStorageMock = (() => {
 })()
 
 vi.stubGlobal('localStorage', localStorageMock)
+
+describe('proxies display mode migration', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    localStorageMock.clear()
+  })
+
+  it('migrates the removed chips mode to card mode', async () => {
+    localStorage.setItem('proxiesDisplayMode', 'chipsMode')
+
+    const store = useConfigStore()
+
+    expect(store.proxiesDisplayMode).toBe('cardMode')
+    await nextTick()
+    expect(localStorage.getItem('proxiesDisplayMode')).toBe('cardMode')
+  })
+})
 
 describe('connections display mode migration', () => {
   beforeEach(() => {
