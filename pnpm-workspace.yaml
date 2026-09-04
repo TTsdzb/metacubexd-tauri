@@ -32,12 +32,12 @@ catalog:
   '@tanstack/vue-query': ^5.101.4
   '@tanstack/vue-virtual': ^3.13.35
   '@tauri-apps/cli': ^2.11.4
-  '@tauri-apps/plugin-http': ^2.5.9
-  '@tauri-apps/plugin-websocket': ^2.4.2
+  '@tauri-apps/plugin-http': ^2.6.0
+  '@tauri-apps/plugin-websocket': ^2.4.3
   '@types/byte-size': ^8.1.2
   '@types/d3': ^7.4.3
   '@types/markdown-it': ^14.1.2
-  '@types/node': ^26.2.0
+  '@types/node': ^26.4.1
   '@types/sortablejs': ^1.15.9
   '@vite-pwa/nuxt': ^1.1.1
   '@vitest/coverage-v8': ^4.1.10
@@ -52,7 +52,7 @@ catalog:
   electron: ^43.3.0
   electron-builder: ^26.0.0
   electron-vite: ^5.0.0
-  esbuild: ^0.28.1
+  esbuild: ^0.28.2
   eslint: ^10.8.1
   eslint-plugin-format: ^2.0.1
   # NEW-SUBSYSTEM deps (consumed by the future agent/server/desktop packages
@@ -127,8 +127,8 @@ overrides:
   # Dependabot transitive-vuln patches. Scoped per major so the bump stays
   # within the resolved line (no cross-major API breakage). esbuild's vuln
   # range is 0.27.3–0.28.0; the unrelated 0.25.12 (< floor) is left untouched.
-  'esbuild@0.27': 0.28.1
-  'esbuild@0.28': 0.28.1
+  'esbuild@0.27': 0.28.2
+  'esbuild@0.28': 0.28.2
   h3: '>=1.15.11'
   'js-yaml@4': ^4.2.0
   koa: '>=3.2.1'
